@@ -1,0 +1,56 @@
+build
+# =========================
+# OS Generated Files
+# =========================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# =========================
+# Python Caches & Envs
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+# Ignore the rogue top-level python folder you currently have
+/python/ 
+
+# =========================
+# Go Binaries
+# =========================
+# Add the names of your compiled Go binaries here so you don't commit them
+/bin/
+# =========================
+# Data Pipeline Folders
+# =========================
+# We ignore these entirely so gigabytes of raw zip files, chunked 
+# markdown, and pruned attachments never accidentally hit Git.
+/ingest/
+/source/
+/chunks/
+/preclean/
+/semclean/
+python/venv/
+venv/
+ENV/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Go Binaries (and old artifacts)
+aexport-gem
+gem-extract
+
+# Generated Context Dumps
+repo-dump.md
+*.log
+
+# System
+.DS_Store
+convoviz
+docs
