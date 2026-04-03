@@ -15,5 +15,8 @@ build
 
 # Generated Context Dumps
 /docs/repo-summary.md
+/docs/.obsidian/
 *.log
 /.ggo/
+
+
