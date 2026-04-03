@@ -38,6 +38,9 @@ func handleInc(ctx context.Context, parts []string) {
 
 	fmt.Printf("Scanning and syncing paths...\n")
 
+	// Track which shadow repos need to be snapshotted
+	shadowsToSnapshot := make(map[string]string) // map[repoRoot]shadowGitDir
+
 	for _, targetPathRaw := range paths {
 		targetPath := expandTilde(targetPathRaw)
 		absTargetPath, _ := filepath.Abs(targetPath)
@@ -69,7 +72,7 @@ func handleInc(ctx context.Context, parts []string) {
 			addedFiles = append(addedFiles, path)
 			ingestionBuilder.WriteString(fmt.Sprintf("--- START FILE: %s ---\n%s\n--- END FILE: %s ---\n\n", path, content, path))
 
-			// (iii) Copy to the central LFS repo's includes directory
+			// Copy to the central LFS repo's includes directory
 			absPath, _ := filepath.Abs(path)
 			cwd, _ := os.Getwd()
 			relPath, err := filepath.Rel(cwd, absPath)
@@ -87,22 +90,26 @@ func handleInc(ctx context.Context, parts []string) {
 			continue
 		}
 
-		// (ii) Check for a .git directory to initialize/commit a shadow repo
-		// Prevent inception: don't create shadow repos inside the ~/.ggo structure!
-		if hasGitDir(absTargetPath) && !strings.Contains(absTargetPath, ".ggo") {
-			safeName := strings.ReplaceAll(absTargetPath, "/", "_")
+		// Resolve the true Git Root (fixes the file vs directory bug)
+		repoRoot := findGitRoot(absTargetPath)
+		if repoRoot != "" && !strings.Contains(repoRoot, ".ggo") {
+			safeName := strings.ReplaceAll(repoRoot, "/", "_")
 			shadowGitDir := filepath.Join(centralRepoDir, "shadow-repos", safeName+".git")
-			
-			if _, err := os.Stat(shadowGitDir); os.IsNotExist(err) {
-				fmt.Printf("Initializing shadow repo for %s...\n", targetPath)
-				os.MkdirAll(shadowGitDir, 0755)
-				exec.Command("git", "--git-dir="+shadowGitDir, "init", "--bare").Run()
-			}
+			shadowsToSnapshot[repoRoot] = shadowGitDir
+		}
+	}
 
-			err = SnapshotGit(shadowGitDir, absTargetPath, commitMsg, timestamp)
-			if err != nil {
-				fmt.Printf("[Warning] Shadow snapshot failed for %s: %v\n", targetPath, err)
-			}
+	// Snapshot all discovered shadow repos ONCE per inc command
+	for repoRoot, shadowGitDir := range shadowsToSnapshot {
+		if _, err := os.Stat(shadowGitDir); os.IsNotExist(err) {
+			fmt.Printf("Initializing shadow repo for %s...\n", repoRoot)
+			os.MkdirAll(shadowGitDir, 0755)
+			exec.Command("git", "--git-dir="+shadowGitDir, "init", "--bare").Run()
+		}
+
+		err := SnapshotGit(shadowGitDir, repoRoot, commitMsg, timestamp)
+		if err != nil {
+			fmt.Printf("[Warning] Shadow snapshot failed for %s: %v\n", repoRoot, err)
 		}
 	}
 
@@ -133,13 +140,12 @@ func handleInc(ctx context.Context, parts []string) {
 		fmt.Printf("[✓] State snapshotted and tagged: %s\n", timestamp)
 	}
 
-	// Finally, send the payload to Gemini
+	// Send the payload to Gemini
 	fmt.Printf("Ingesting %d files into AI context...\033[90m (Thinking...)\033[0m\n", len(addedFiles))
 	prompt := "Please silently ingest the following files into your context for our project. Acknowledge by replying ONLY with 'Files ingested successfully.' Do not summarize or repeat the contents.\n\n" + ingestionBuilder.String()
 	
 	resp, err := SendPrompt(ctx, prompt)
 	if err != nil {
-		// Aggressively catch gRPC cancellation errors
 		if err == context.Canceled || strings.Contains(err.Error(), "canceled") {
 			return 
 		}
@@ -150,7 +156,6 @@ func handleInc(ctx context.Context, parts []string) {
 	}
 }
 
-// copyFile is a simple utility to copy a file from src to dst
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -168,12 +173,17 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-// hasGitDir searches upward from the given path to see if it belongs to a git repo
-func hasGitDir(path string) bool {
+// findGitRoot searches upward to find the actual root of the git repository,
+// safely handling both files and directories.
+func findGitRoot(path string) string {
 	dir := path
+	if stat, err := os.Stat(path); err == nil && !stat.IsDir() {
+		dir = filepath.Dir(path) // Start from the parent directory if it's a file
+	}
+
 	for {
 		if stat, err := os.Stat(filepath.Join(dir, ".git")); err == nil && stat.IsDir() {
-			return true
+			return dir
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -181,5 +191,5 @@ func hasGitDir(path string) bool {
 		}
 		dir = parent
 	}
-	return false
+	return ""
 }

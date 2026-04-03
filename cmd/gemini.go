@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/generative-ai-go/genai"
@@ -45,7 +46,29 @@ func InitGemini(ctx context.Context) error {
 	// 3. Initialize the Model and Stateful Chat
 	model := client.GenerativeModel("gemini-2.5-pro")
 	// You can adjust temperature here if needed: model.SetTemperature(0.2)
-	
+
+	// 4. Load the Repository Context into System Instructions
+	// Check docs/repo-summary.md first, fallback to root repo-summary.md
+	summaryPath := filepath.Join("docs", "repo-summary.md")
+	summaryBytes, err := os.ReadFile(summaryPath)
+	if err != nil {
+		summaryPath = "repo-summary.md"
+		summaryBytes, err = os.ReadFile(summaryPath)
+	}
+
+	if err == nil {
+		systemPrompt := fmt.Sprintf(
+			"You are an expert AI developer assistant deeply integrated into the 'ggo' CLI tool.\n"+
+				"Below is the current state of the user's repository. Use this to answer all questions.\n\n"+
+				"%s", string(summaryBytes),
+		)
+		
+		// In v0.20.1, SystemInstruction is a *genai.Content
+		model.SystemInstruction = &genai.Content{
+			Parts: []genai.Part{genai.Text(systemPrompt)},
+		}
+	}
+
 	chatSession = model.StartChat()
 
 	return nil

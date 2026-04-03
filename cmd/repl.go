@@ -37,6 +37,7 @@ func RunREPL() {
 		readline.PcItem("cw"),
 		readline.PcItem("gl"),
 		readline.PcItem("gd"),
+		readline.PcItem("gs"), // Added gs to autocomplete
 	)
 
 	historyPath := filepath.Join(".ggo", "ggo_history")
@@ -113,6 +114,8 @@ func RunREPL() {
 			handleGL(parts)
 		case "gd":
 			handleGD(parts)
+		case "gs": // Wired up gs locally!
+			handleGS(parts)
 		case "p":
 			handleP(ctx, l)
 		case "ps":
@@ -210,7 +213,6 @@ func handleSet(parts []string) {
 	}
 }
 
-// expandTilde safely resolves "~" to the user's home directory.
 func expandTilde(path string) string {
 	if strings.HasPrefix(path, "~") {
 		home, err := os.UserHomeDir()
@@ -226,10 +228,7 @@ func expandTilde(path string) string {
 	return path
 }
 
-// listFiles provides dynamic, bash-like path auto-completion for the 'inc' command
 func listFiles(line string) []string {
-	// 'line' is the rest of the string after "inc ".
-	// Split by spaces to isolate the exact token the user is currently typing
 	words := strings.Split(line, " ")
 	currentWord := words[len(words)-1]
 
@@ -257,19 +256,15 @@ func listFiles(line string) []string {
 
 	var completions []string
 	for _, entry := range entries {
-		// 1. Filter by what the user has typed so far
 		if !strings.HasPrefix(entry.Name(), searchPrefix) {
 			continue
 		}
-
-		// 2. Bash-like hidden file filtering: hide dotfiles unless explicitly requested
 		if !strings.HasPrefix(searchPrefix, ".") && strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 
 		var completedWord string
 
-		// 3. Reconstruct the completion string based on the user's input prefix
 		if currentWord == "" || strings.HasSuffix(currentWord, "/") {
 			completedWord = currentWord + entry.Name()
 		} else if currentWord == "~" {
@@ -287,12 +282,10 @@ func listFiles(line string) []string {
 			}
 		}
 
-		// Add trailing slash for directories to encourage further navigation
 		if entry.IsDir() {
 			completedWord += "/"
 		}
 
-		// 4. Re-stitch the string together if the user is typing multiple files
 		if len(words) > 1 {
 			prefix := strings.Join(words[:len(words)-1], " ")
 			completions = append(completions, prefix+" "+completedWord)
