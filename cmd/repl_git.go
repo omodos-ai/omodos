@@ -47,7 +47,9 @@ func handleGD(parts []string) {
 	centralRepoDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
 	gitDir := filepath.Join(centralRepoDir, ".git")
 
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) { return }
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		return
+	}
 
 	cmd := exec.Command("git", "--git-dir="+gitDir, "log", "-1", "--pretty=format:%C(cyan)Date:%Creset %ad %C(magenta)(%ar)%Creset\n%C(cyan)HEAD:%Creset %C(yellow)%h%Creset\n%C(cyan)Tags:%Creset %C(green)%D%Creset\n%C(cyan)Msg :%Creset %s", "--date=format:%Y-%m-%d %H:%M:%S")
 	cmd.Stdout = os.Stdout
@@ -68,25 +70,29 @@ func handleGS(parts []string) {
 		return
 	}
 
-	isReturningToPresent := len(parts) == 1
-	timelineIdx := "0"
-	if !isReturningToPresent {
-		timelineIdx = parts[1]
-	}
-	if timelineIdx == "0" {
-		isReturningToPresent = true
-	}
-
 	// 1. Where are we right now?
 	branchCmd := exec.Command("git", "--git-dir="+centralGitDir, "branch", "--show-current")
 	branchOut, _ := branchCmd.Output()
 	currentlyOnMaster := strings.TrimSpace(string(branchOut)) == "master"
 
-	// 2. Resolve Target (ALWAYS relative to absolute master)
-	var targetTag string
-	if isReturningToPresent {
-		targetTag = "master"
-	} else {
+	// 2. What does the user want to do?
+	isReturningToPresent := len(parts) == 1 || (len(parts) > 1 && parts[1] == "0")
+	timelineIdx := "0"
+	if !isReturningToPresent {
+		timelineIdx = parts[1]
+	}
+
+	// STRICT ENFORCEMENT: No Past -> Past travel allowed.
+	if !currentlyOnMaster && !isReturningToPresent {
+		fmt.Println("[Error] You are currently viewing a past state.")
+		fmt.Println("Please run 'gs' to return to the present before traveling to a different time.")
+		return
+	}
+
+	cwd, _ := os.Getwd()
+
+	// SCENARIO A: Leaving the Present (Traveling to the Past)
+	if currentlyOnMaster && !isReturningToPresent {
 		targetCommit := fmt.Sprintf("master~%s", timelineIdx)
 		tagCmd := exec.Command("git", "--git-dir="+centralGitDir, "describe", "--tags", "--exact-match", targetCommit)
 		tagOut, err := tagCmd.Output()
@@ -94,13 +100,9 @@ func handleGS(parts []string) {
 			fmt.Printf("[Error] Could not find a timestamp tag for index [%s].\n", timelineIdx)
 			return
 		}
-		targetTag = strings.TrimSpace(string(tagOut))
-	}
+		targetTag := strings.TrimSpace(string(tagOut))
 
-	cwd, _ := os.Getwd()
-
-	// 3. Handle Departure from Present (Stash real work)
-	if currentlyOnMaster && !isReturningToPresent {
+		// 1. Snapshot real working tree in shadow timeline just in case
 		fmt.Println("Creating safety snapshot in shadow timeline...")
 		now := time.Now()
 		safeTimestamp := now.Format("20060102T150405")
@@ -120,6 +122,7 @@ func handleGS(parts []string) {
 		}
 		fmt.Printf("[✓] Timeline safety snapshot saved: %s\n", safeTimestamp)
 
+		// 2. Stash real uncommitted code
 		fmt.Printf("Backing up uncommitted code to standard Git stash...\n")
 		stashCmd := exec.Command("git", "stash", "push", "-m", fmt.Sprintf("ggo backup before jumping to [%s]", timelineIdx))
 		stashCmd.Dir = cwd
@@ -128,36 +131,46 @@ func handleGS(parts []string) {
 		} else {
 			fmt.Println("[✓] Working directory stashed safely.")
 		}
-	}
 
-	// 4. Handle Departure from Past (Wipe shadow files)
-	if !currentlyOnMaster {
-		fmt.Println("Clearing past shadow files from working directory...")
-		exec.Command("git", "-C", cwd, "reset", "--hard", "HEAD").Run()
-	}
+		fmt.Printf("\nSwitching timeline to: %s\n", targetTag)
 
-	fmt.Printf("\nSwitching timeline to: %s\n", targetTag)
+		// 3. Checkout old Central LFS
+		exec.Command("git", "--git-dir="+centralGitDir, "--work-tree="+centralRepoDir, "checkout", "-f", targetTag).Run()
+		fmt.Println("[✓] Central Context (LFS) restored.")
 
-	// 5. Restore Central Repo
-	exec.Command("git", "--git-dir="+centralGitDir, "--work-tree="+centralRepoDir, "checkout", "-f", targetTag).Run()
-	fmt.Println("[✓] Central Context (LFS) restored.")
-
-	// 6. Restore Shadow Repos
-	shadowReposDir := filepath.Join(centralRepoDir, "shadow-repos")
-	entries, _ := os.ReadDir(shadowReposDir)
-	for _, entry := range entries {
-		if entry.IsDir() && strings.HasSuffix(entry.Name(), ".git") {
-			shadowGit := filepath.Join(shadowReposDir, entry.Name())
-			workTree := strings.ReplaceAll(strings.TrimSuffix(entry.Name(), ".git"), "_", "/")
-			if stat, err := os.Stat(workTree); err == nil && stat.IsDir() {
-				exec.Command("git", "--git-dir="+shadowGit, "--work-tree="+workTree, "checkout", "-f", targetTag).Run()
+		// 4. Checkout old Shadow Files into working directory
+		for _, entry := range entries {
+			if entry.IsDir() && strings.HasSuffix(entry.Name(), ".git") {
+				shadowGit := filepath.Join(shadowReposDir, entry.Name())
+				workTree := strings.ReplaceAll(strings.TrimSuffix(entry.Name(), ".git"), "_", "/")
+				if stat, err := os.Stat(workTree); err == nil && stat.IsDir() {
+					exec.Command("git", "--git-dir="+shadowGit, "--work-tree="+workTree, "checkout", "-f", targetTag).Run()
+				}
 			}
 		}
+		fmt.Printf("\n[✓] Successfully reverted timeline to [%s] %s.\n", timelineIdx, targetTag)
+		return
 	}
 
-	if isReturningToPresent {
+	// SCENARIO B: Returning to the Present (from the Past)
+	if !currentlyOnMaster && isReturningToPresent {
+		fmt.Println("Clearing past shadow files from working directory...")
+		// Hard reset the REAL repo to its own HEAD to destroy any shadow files we extracted
+		exec.Command("git", "-C", cwd, "reset", "--hard", "HEAD").Run()
+
+		fmt.Printf("\nSwitching timeline to: master\n")
+
+		// 1. Return Central LFS to master
+		exec.Command("git", "--git-dir="+centralGitDir, "--work-tree="+centralRepoDir, "checkout", "-f", "master").Run()
+		fmt.Println("[✓] Central Context (LFS) restored.")
+
+		// NOTE: We DO NOT checkout shadow repos when returning to master. 
+		// The `git reset --hard HEAD` on the real repo just put your code exactly where it belongs.
+
 		fmt.Printf("\n[✓] Successfully returned to the present (master).\n")
 		fmt.Println("Restoring original uncommitted working state...")
+		
+		// 2. Pop the stash we made when leaving the present
 		popCmd := exec.Command("git", "stash", "pop")
 		popCmd.Dir = cwd
 		if out, err := popCmd.CombinedOutput(); err != nil {
@@ -169,8 +182,12 @@ func handleGS(parts []string) {
 		} else {
 			fmt.Println("[✓] Working directory unstashed successfully.")
 		}
-	} else {
-		fmt.Printf("\n[✓] Successfully reverted timeline to [%s] %s.\n", timelineIdx, targetTag)
+		return
+	}
+
+	// SCENARIO C: Already on Present, asked to return to Present.
+	if currentlyOnMaster && isReturningToPresent {
+		fmt.Println("[Info] You are already at the present state (master).")
 	}
 }
 
@@ -179,7 +196,9 @@ func CleanupTimeMachine() {
 	centralRepoDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
 	centralGitDir := filepath.Join(centralRepoDir, ".git")
 
-	if _, err := os.Stat(centralGitDir); os.IsNotExist(err) { return }
+	if _, err := os.Stat(centralGitDir); os.IsNotExist(err) {
+		return
+	}
 
 	cmd := exec.Command("git", "--git-dir="+centralGitDir, "branch", "--show-current")
 	out, err := cmd.Output()
