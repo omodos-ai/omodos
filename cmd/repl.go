@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/chzyer/readline"
 )
@@ -15,6 +17,16 @@ import (
 var lastAPIResponse string
 
 func RunREPL() {
+	// --- Signal Handling for graceful termination ---
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		fmt.Println("\n[!] Caught termination signal. Cleaning up...")
+		CleanupTimeMachine()
+		os.Exit(0)
+	}()
+
 	var completer = readline.NewPrefixCompleter(
 		readline.PcItem("quit"),
 		readline.PcItem("exit"),
@@ -35,6 +47,9 @@ func RunREPL() {
 		readline.PcItem("ps"),
 		readline.PcItem("cr"),
 		readline.PcItem("cw"),
+		readline.PcItem("gl"),
+		readline.PcItem("gd"),
+		readline.PcItem("gs"),
 	)
 
 	historyPath := filepath.Join(".ggo", "ggo_history")
@@ -92,6 +107,7 @@ func RunREPL() {
 		switch cmd {
 		case "quit", "exit":
 			fmt.Println("Flushing ledger and exiting...")
+			CleanupTimeMachine()
 			os.Exit(0)
 		case "clear":
 			fmt.Println("-> Stub: Clearing active chat context")
@@ -107,6 +123,12 @@ func RunREPL() {
 			handleCR()
 		case "cw":
 			handleCW(parts)
+		case "gl":
+			handleGL(parts)
+		case "gd":
+			handleGD(parts)
+		case "gs":
+			handleGS(parts)
 		case "p":
 			handleP(ctx, l)
 		case "ps":
@@ -116,6 +138,7 @@ func RunREPL() {
 			sendAndRender(ctx, line)
 		}
 	}
+	CleanupTimeMachine()
 }
 
 func handleList(parts []string) {
@@ -168,11 +191,13 @@ func handleSet(parts []string) {
 	value := strings.Join(parts[2:], " ")
 
 	if strings.HasSuffix(field, "_dir") || strings.HasSuffix(field, "path") {
-		if _, err := os.Stat(value); os.IsNotExist(err) {
-			fmt.Printf("[Error] Path does not exist: %s\n", value)
+		expanded := expandTilde(value)
+		if _, err := os.Stat(expanded); os.IsNotExist(err) {
+			fmt.Printf("[Error] Path does not exist: %s\n", expanded)
 			fmt.Println("Set operation aborted.")
 			return
 		}
+		value = expanded
 	}
 
 	isGlobal := GlobalViper.IsSet(field) || field == "export_date" || field == "source_dir" || field == "chunks_dir" || field == "ingest_dir"
@@ -202,7 +227,21 @@ func handleSet(parts []string) {
 	}
 }
 
-// listFiles provides dynamic path auto-completion for the 'inc' command
+func expandTilde(path string) string {
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			if path == "~" {
+				return home
+			}
+			if strings.HasPrefix(path, "~/") {
+				return filepath.Join(home, path[2:])
+			}
+		}
+	}
+	return path
+}
+
 func listFiles(line string) []string {
 	search := line + "*"
 	if line == "" {

@@ -56,8 +56,10 @@ func handleGD(parts []string) {
 	cmd.Stderr = os.Stderr
 
 	fmt.Println("\n--- Current State ---")
-	cmd.Run()
-	fmt.Println("\n")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("[Error] Failed to get state: %v\n", err)
+	}
+	fmt.Println()
 }
 
 func handleGS(parts []string) {
@@ -91,13 +93,15 @@ func handleGS(parts []string) {
 
 	cwd, _ := os.Getwd()
 
+	// ====================================================================
 	// SCENARIO A: Leaving the Present (Traveling to the Past)
+	// ====================================================================
 	if currentlyOnMaster && !isReturningToPresent {
 		targetCommit := fmt.Sprintf("master~%s", timelineIdx)
 		tagCmd := exec.Command("git", "--git-dir="+centralGitDir, "describe", "--tags", "--exact-match", targetCommit)
 		tagOut, err := tagCmd.Output()
 		if err != nil {
-			fmt.Printf("[Error] Could not find a timestamp tag for index [%s].\n", timelineIdx)
+			fmt.Printf("[Error] Could not find a timestamp tag for index [%s]. Ensure it has a valid tag.\n", timelineIdx)
 			return
 		}
 		targetTag := strings.TrimSpace(string(tagOut))
@@ -108,7 +112,10 @@ func handleGS(parts []string) {
 		safeTimestamp := now.Format("20060102T150405")
 		safeMsg := fmt.Sprintf("auto-backup before rewinding to [%s]", timelineIdx)
 
-		SnapshotGit(centralGitDir, centralRepoDir, safeMsg, safeTimestamp)
+		if err := SnapshotGit(centralGitDir, centralRepoDir, safeMsg, safeTimestamp); err != nil {
+			fmt.Printf("[Warning] Central snapshot failed: %v\n", err)
+		}
+		
 		shadowReposDir := filepath.Join(centralRepoDir, "shadow-repos")
 		entries, _ := os.ReadDir(shadowReposDir)
 		for _, entry := range entries {
@@ -116,7 +123,9 @@ func handleGS(parts []string) {
 				shadowGit := filepath.Join(shadowReposDir, entry.Name())
 				workTree := strings.ReplaceAll(strings.TrimSuffix(entry.Name(), ".git"), "_", "/")
 				if stat, err := os.Stat(workTree); err == nil && stat.IsDir() {
-					SnapshotGit(shadowGit, workTree, safeMsg, safeTimestamp)
+					if err := SnapshotGit(shadowGit, workTree, safeMsg, safeTimestamp); err != nil {
+						fmt.Printf("[Warning] Shadow snapshot failed for %s: %v\n", workTree, err)
+					}
 				}
 			}
 		}
@@ -127,7 +136,8 @@ func handleGS(parts []string) {
 		stashCmd := exec.Command("git", "stash", "push", "-m", fmt.Sprintf("ggo backup before jumping to [%s]", timelineIdx))
 		stashCmd.Dir = cwd
 		if out, err := stashCmd.CombinedOutput(); err != nil && !strings.Contains(string(out), "No local changes") {
-			fmt.Printf("[Info] Stash status: %s\n", strings.TrimSpace(string(out)))
+			fmt.Printf("[Fatal] Git Stash failed: %v\nOutput: %s\n", err, string(out))
+			return // ABORT: Do not ruin the working directory if stash fails
 		} else {
 			fmt.Println("[✓] Working directory stashed safely.")
 		}
@@ -135,7 +145,11 @@ func handleGS(parts []string) {
 		fmt.Printf("\nSwitching timeline to: %s\n", targetTag)
 
 		// 3. Checkout old Central LFS
-		exec.Command("git", "--git-dir="+centralGitDir, "--work-tree="+centralRepoDir, "checkout", "-f", targetTag).Run()
+		checkoutCentral := exec.Command("git", "--git-dir="+centralGitDir, "--work-tree="+centralRepoDir, "checkout", "-f", targetTag)
+		if out, err := checkoutCentral.CombinedOutput(); err != nil {
+			fmt.Printf("[Fatal] Failed to restore Central LFS: %v\nOutput: %s\n", err, string(out))
+			return // ABORT
+		}
 		fmt.Println("[✓] Central Context (LFS) restored.")
 
 		// 4. Checkout old Shadow Files into working directory
@@ -144,7 +158,13 @@ func handleGS(parts []string) {
 				shadowGit := filepath.Join(shadowReposDir, entry.Name())
 				workTree := strings.ReplaceAll(strings.TrimSuffix(entry.Name(), ".git"), "_", "/")
 				if stat, err := os.Stat(workTree); err == nil && stat.IsDir() {
-					exec.Command("git", "--git-dir="+shadowGit, "--work-tree="+workTree, "checkout", "-f", targetTag).Run()
+					checkoutShadow := exec.Command("git", "--git-dir="+shadowGit, "--work-tree="+workTree, "checkout", "-f", targetTag)
+					if out, err := checkoutShadow.CombinedOutput(); err != nil {
+						// It is normal for a shadow repo not to exist at an older timestamp. Log as info.
+						fmt.Printf("[Info] Skipped shadow restoration for %s (likely did not exist yet)\n", filepath.Base(workTree))
+					} else {
+						_ = out // success
+					}
 				}
 			}
 		}
@@ -152,40 +172,60 @@ func handleGS(parts []string) {
 		return
 	}
 
+	// ====================================================================
 	// SCENARIO B: Returning to the Present (from the Past)
+	// ====================================================================
 	if !currentlyOnMaster && isReturningToPresent {
 		fmt.Println("Clearing past shadow files from working directory...")
-		// Hard reset the REAL repo to its own HEAD to destroy any shadow files we extracted
-		exec.Command("git", "-C", cwd, "reset", "--hard", "HEAD").Run()
+		
+		// 1. Bulletproof wipe of shadow files. Halt immediately if this fails.
+		resetCmd := exec.Command("git", "reset", "--hard", "HEAD")
+		resetCmd.Dir = cwd
+		if out, err := resetCmd.CombinedOutput(); err != nil {
+			fmt.Printf("[Fatal] Failed to reset real repo working tree: %v\nOutput: %s\n", err, string(out))
+			return
+		}
+		
+		cleanCmd := exec.Command("git", "clean", "-fd")
+		cleanCmd.Dir = cwd
+		if out, err := cleanCmd.CombinedOutput(); err != nil {
+			fmt.Printf("[Fatal] Failed to clean working tree: %v\nOutput: %s\n", err, string(out))
+			return
+		}
 
 		fmt.Printf("\nSwitching timeline to: master\n")
 
-		// 1. Return Central LFS to master
-		exec.Command("git", "--git-dir="+centralGitDir, "--work-tree="+centralRepoDir, "checkout", "-f", "master").Run()
+		// 2. Return Central LFS to master
+		checkoutCentral := exec.Command("git", "--git-dir="+centralGitDir, "--work-tree="+centralRepoDir, "checkout", "-f", "master")
+		if out, err := checkoutCentral.CombinedOutput(); err != nil {
+			fmt.Printf("[Fatal] Failed to restore Central LFS to master: %v\nOutput: %s\n", err, string(out))
+			return
+		}
 		fmt.Println("[✓] Central Context (LFS) restored.")
-
-		// NOTE: We DO NOT checkout shadow repos when returning to master. 
-		// The `git reset --hard HEAD` on the real repo just put your code exactly where it belongs.
 
 		fmt.Printf("\n[✓] Successfully returned to the present (master).\n")
 		fmt.Println("Restoring original uncommitted working state...")
-		
-		// 2. Pop the stash we made when leaving the present
-		popCmd := exec.Command("git", "stash", "pop")
-		popCmd.Dir = cwd
-		if out, err := popCmd.CombinedOutput(); err != nil {
-			if strings.Contains(string(out), "No stash entries") {
-				fmt.Println("[✓] Working directory is clean (nothing to unstash).")
+
+		// 3. SMART POP: Verify the top stash is actually ours before popping it
+		stashListCmd := exec.Command("git", "stash", "list", "-1")
+		stashListCmd.Dir = cwd
+		if stashOut, err := stashListCmd.CombinedOutput(); err == nil && strings.Contains(string(stashOut), "ggo backup before jumping to") {
+			popCmd := exec.Command("git", "stash", "pop")
+			popCmd.Dir = cwd
+			if out, err := popCmd.CombinedOutput(); err != nil {
+				fmt.Printf("[Warning] Stash pop failed (you likely have conflicts to resolve manually): %v\nOutput: %s\n", err, string(out))
 			} else {
-				fmt.Printf("[Warning] Could not auto-unstash: %s\n", string(out))
+				fmt.Println("[✓] Working directory unstashed successfully.")
 			}
 		} else {
-			fmt.Println("[✓] Working directory unstashed successfully.")
+			fmt.Println("[✓] Working directory is clean (no ggo stash to pop).")
 		}
 		return
 	}
 
+	// ====================================================================
 	// SCENARIO C: Already on Present, asked to return to Present.
+	// ====================================================================
 	if currentlyOnMaster && isReturningToPresent {
 		fmt.Println("[Info] You are already at the present state (master).")
 	}
