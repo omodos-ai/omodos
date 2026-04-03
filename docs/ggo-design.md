@@ -106,7 +106,7 @@ Directory structure:
 ```
 ~/
 	.ggo/
-		aiggo-<project-name>/  # the .ggo internal lfs repo
+		ai-<project-name>/  # the .ggo internal lfs repo
 			project.yaml
 			GEMINI.md
 			chats/source/yyyy/mm/<ai-interaction files>
@@ -175,7 +175,8 @@ So the typical workflow is:
 #### 1.6.2 git and snapshot commands
 
 - `gl <count>` git list tags with descriptions when available, without arg, all timestamps (human readable) and descs
-- `gs [count]` git set time tag or chat name (at final chat timestamp), without argument, the last one. Before executing the checkout, ggo snapshots the current working tree (edited, staged, unmodified) to prevent data loss, allowing immediate reversal.  Stashing of current state is automatic
+- `gs [tag|chat]` git set time tag or chat name (at final chat timestamp), without argument, the last one. Before executing the checkout, ggo snapshots the current working tree (edited, staged, unmodified) to prevent data loss, allowing immediate reversal.  Stashing of current state is automatic
+- `gh` return the working repos and `.ggo` repo to the head (normal situation)
 - `gd` git describe the tag currently set
 - `gc <count>` clear `<count>` tags from the current chat fast forward to last one, without arguments, fast forward to the last one.
 - `gp [push|pull]` push/pull the lfs repo to github (described above). Merging is strictly fast-forward based on timestamps. No 3-way merges. If histories diverge, it aborts and requires a forceful override (`--overwrite-local` or `--overwrite-remote`).

@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/chzyer/readline"
 )
@@ -15,6 +17,16 @@ import (
 var lastAPIResponse string
 
 func RunREPL() {
+	// --- Signal Handling for graceful termination ---
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		fmt.Println("\n[!] Caught termination signal. Cleaning up...")
+		CleanupTimeMachine()
+		os.Exit(0)
+	}()
+
 	var completer = readline.NewPrefixCompleter(
 		readline.PcItem("quit"),
 		readline.PcItem("exit"),
@@ -37,7 +49,7 @@ func RunREPL() {
 		readline.PcItem("cw"),
 		readline.PcItem("gl"),
 		readline.PcItem("gd"),
-		readline.PcItem("gs"), // Added gs to autocomplete
+		readline.PcItem("gs"),
 	)
 
 	historyPath := filepath.Join(".ggo", "ggo_history")
@@ -71,7 +83,7 @@ func RunREPL() {
 		line, err := l.Readline()
 		if err == readline.ErrInterrupt {
 			if len(line) == 0 {
-				break
+				break // Triggers normal exit loop below
 			} else {
 				continue
 			}
@@ -95,6 +107,7 @@ func RunREPL() {
 		switch cmd {
 		case "quit", "exit":
 			fmt.Println("Flushing ledger and exiting...")
+			CleanupTimeMachine() // Explicit cleanup before exiting
 			os.Exit(0)
 		case "clear":
 			fmt.Println("-> Stub: Clearing active chat context")
@@ -114,7 +127,7 @@ func RunREPL() {
 			handleGL(parts)
 		case "gd":
 			handleGD(parts)
-		case "gs": // Wired up gs locally!
+		case "gs":
 			handleGS(parts)
 		case "p":
 			handleP(ctx, l)
@@ -125,6 +138,9 @@ func RunREPL() {
 			sendAndRender(ctx, line)
 		}
 	}
+	
+	// If the loop breaks (e.g. empty Ctrl+C or EOF)
+	CleanupTimeMachine()
 }
 
 func handleList(parts []string) {

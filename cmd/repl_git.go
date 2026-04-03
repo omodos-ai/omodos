@@ -78,26 +78,29 @@ func handleGS(parts []string) {
 		return
 	}
 
-	// 1. Anchor Time Travel to the absolute present ("master"), not the relative "HEAD"
-	targetCommit := "master"
+	// 1. Determine Intent
+	isReturningToPresent := len(parts) == 1
 	timelineIdx := "0"
-	if len(parts) > 1 {
-		targetCommit = fmt.Sprintf("master~%s", parts[1])
+	if !isReturningToPresent {
 		timelineIdx = parts[1]
 	}
 
-	isReturningToPresent := (timelineIdx == "0")
-
-	// 2. Resolve the exact tag for that commit
-	tagCmd := exec.Command("git", "--git-dir="+centralGitDir, "describe", "--tags", "--exact-match", targetCommit)
-	tagOut, err := tagCmd.Output()
-	if err != nil {
-		fmt.Printf("[Error] Could not find a timestamp tag for index [%s].\n", timelineIdx)
-		return
+	// 2. Resolve Tag
+	var targetTag string
+	if isReturningToPresent {
+		targetTag = "master"
+	} else {
+		targetCommit := fmt.Sprintf("HEAD~%s", timelineIdx)
+		tagCmd := exec.Command("git", "--git-dir="+centralGitDir, "describe", "--tags", "--exact-match", targetCommit)
+		tagOut, err := tagCmd.Output()
+		if err != nil {
+			fmt.Printf("[Error] Could not find a timestamp tag for index [%s]. Ensure it has a valid tag.\n", timelineIdx)
+			return
+		}
+		targetTag = strings.TrimSpace(string(tagOut))
 	}
-	targetTag := strings.TrimSpace(string(tagOut))
 
-	// 3. Safety First: Create a Timeline Snapshot BEFORE rewinding (skip if returning to present)
+	// 3. Safety Snapshot
 	if !isReturningToPresent {
 		fmt.Println("Creating safety snapshot in shadow timeline...")
 		now := time.Now()
@@ -122,7 +125,7 @@ func handleGS(parts []string) {
 		fmt.Printf("[✓] Timeline safety snapshot saved: %s\n", safeTimestamp)
 	}
 
-	// 4. Stash uncommitted user changes
+	// 4. Stash uncommitted changes
 	cwd, _ := os.Getwd()
 	fmt.Printf("Backing up uncommitted code to standard Git stash...\n")
 	stashCmd := exec.Command("git", "stash", "push", "-m", fmt.Sprintf("ggo backup before jumping to [%s]", timelineIdx))
@@ -135,18 +138,17 @@ func handleGS(parts []string) {
 		fmt.Println("[✓] Working directory stashed safely.")
 	}
 
-	fmt.Printf("\nSwitching timeline to: [%s] %s\n", timelineIdx, targetTag)
+	fmt.Printf("\nSwitching timeline to: %s\n", targetTag)
 
-	// 5. Restore the Central Repo (AI Brain)
-	// Notice we checkout targetTag, keeping HEAD detached in the past cleanly!
-	checkoutCentral := exec.Command("git", "--git-dir="+centralGitDir, "--work-tree="+centralRepoDir, "checkout", targetTag)
-	if err := checkoutCentral.Run(); err != nil {
-		fmt.Printf("[Error] Failed to restore central repo: %v\n", err)
+	// 5. Restore Central Repo
+	checkoutCentral := exec.Command("git", "--git-dir="+centralGitDir, "--work-tree="+centralRepoDir, "checkout", "-f", targetTag)
+	if out, err := checkoutCentral.CombinedOutput(); err != nil {
+		fmt.Printf("[Error] Failed to restore central repo: %v\nOutput: %s\n", err, string(out))
 		return
 	}
 	fmt.Println("[✓] Central Context (LFS) restored.")
 
-	// 6. Restore all associated Shadow Repos (Code Hands)
+	// 6. Restore Shadow Repos
 	shadowReposDir := filepath.Join(centralRepoDir, "shadow-repos")
 	entries, _ := os.ReadDir(shadowReposDir)
 	for _, entry := range entries {
@@ -158,7 +160,7 @@ func handleGS(parts []string) {
 			if stat, err := os.Stat(workTree); err == nil && stat.IsDir() {
 				checkoutShadow := exec.Command("git", "--git-dir="+shadowGit, "--work-tree="+workTree, "checkout", "-f", targetTag)
 				if err := checkoutShadow.Run(); err != nil {
-					// Ignore safely
+					// Safely ignore
 				} else {
 					fmt.Printf("[✓] Code state restored: %s\n", workTree)
 				}
@@ -166,11 +168,15 @@ func handleGS(parts []string) {
 		}
 	}
 
-	fmt.Printf("\n[✓] Successfully reverted timeline to [%s] %s.\n", timelineIdx, targetTag)
-
-	// 7. Auto-Cleanup: Pop the stash if we are returning to the present
 	if isReturningToPresent {
-		fmt.Println("\nReturning to present: Restoring uncommitted working state...")
+		fmt.Printf("\n[✓] Successfully returned to the present (master).\n")
+	} else {
+		fmt.Printf("\n[✓] Successfully reverted timeline to [%s] %s.\n", timelineIdx, targetTag)
+	}
+
+	// 7. Auto-Cleanup
+	if isReturningToPresent {
+		fmt.Println("Restoring uncommitted working state...")
 		popCmd := exec.Command("git", "stash", "pop")
 		popCmd.Dir = cwd
 		if out, err := popCmd.CombinedOutput(); err != nil {
@@ -182,5 +188,26 @@ func handleGS(parts []string) {
 		} else {
 			fmt.Println("[✓] Working directory unstashed successfully.")
 		}
+	}
+}
+
+// CleanupTimeMachine checks if we are currently time-traveling (not on master)
+// and forces a return to the present to prevent leaving the user in a detached state.
+func CleanupTimeMachine() {
+	home, _ := os.UserHomeDir()
+	centralRepoDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
+	centralGitDir := filepath.Join(centralRepoDir, ".git")
+
+	if _, err := os.Stat(centralGitDir); os.IsNotExist(err) {
+		return
+	}
+
+	cmd := exec.Command("git", "--git-dir="+centralGitDir, "branch", "--show-current")
+	out, err := cmd.Output()
+	
+	// If output is empty, we are in a detached HEAD state (time traveling)
+	if err == nil && strings.TrimSpace(string(out)) != "master" {
+		fmt.Println("\n[ggo] Exiting while time machine is active. Auto-returning to present...")
+		handleGS([]string{"gs"})
 	}
 }

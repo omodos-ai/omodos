@@ -90,11 +90,10 @@ func sendAndRender(ctx context.Context, prompt string) {
 	signal.Stop(sigChan)
 
 	if err != nil {
-		// Aggressively catch gRPC cancellation errors to avoid stack trace vomit
-		if err == context.Canceled || strings.Contains(err.Error(), "canceled") {
+		if err == context.Canceled {
 			return 
 		}
-		fmt.Printf("\n[API Error] %v\n", err)
+		fmt.Printf("[API Error] %v\n", err)
 		return
 	}
 
