@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/chzyer/readline"
 )
@@ -17,16 +15,6 @@ import (
 var lastAPIResponse string
 
 func RunREPL() {
-	// --- Signal Handling for graceful termination ---
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		fmt.Println("\n[!] Caught termination signal. Cleaning up...")
-		CleanupTimeMachine()
-		os.Exit(0)
-	}()
-
 	var completer = readline.NewPrefixCompleter(
 		readline.PcItem("quit"),
 		readline.PcItem("exit"),
@@ -47,9 +35,6 @@ func RunREPL() {
 		readline.PcItem("ps"),
 		readline.PcItem("cr"),
 		readline.PcItem("cw"),
-		readline.PcItem("gl"),
-		readline.PcItem("gd"),
-		readline.PcItem("gs"),
 	)
 
 	historyPath := filepath.Join(".ggo", "ggo_history")
@@ -83,7 +68,7 @@ func RunREPL() {
 		line, err := l.Readline()
 		if err == readline.ErrInterrupt {
 			if len(line) == 0 {
-				break // Triggers normal exit loop below
+				break
 			} else {
 				continue
 			}
@@ -107,7 +92,6 @@ func RunREPL() {
 		switch cmd {
 		case "quit", "exit":
 			fmt.Println("Flushing ledger and exiting...")
-			CleanupTimeMachine() // Explicit cleanup before exiting
 			os.Exit(0)
 		case "clear":
 			fmt.Println("-> Stub: Clearing active chat context")
@@ -123,12 +107,6 @@ func RunREPL() {
 			handleCR()
 		case "cw":
 			handleCW(parts)
-		case "gl":
-			handleGL(parts)
-		case "gd":
-			handleGD(parts)
-		case "gs":
-			handleGS(parts)
 		case "p":
 			handleP(ctx, l)
 		case "ps":
@@ -138,9 +116,6 @@ func RunREPL() {
 			sendAndRender(ctx, line)
 		}
 	}
-	
-	// If the loop breaks (e.g. empty Ctrl+C or EOF)
-	CleanupTimeMachine()
 }
 
 func handleList(parts []string) {
@@ -193,13 +168,11 @@ func handleSet(parts []string) {
 	value := strings.Join(parts[2:], " ")
 
 	if strings.HasSuffix(field, "_dir") || strings.HasSuffix(field, "path") {
-		expanded := expandTilde(value)
-		if _, err := os.Stat(expanded); os.IsNotExist(err) {
-			fmt.Printf("[Error] Path does not exist: %s\n", expanded)
+		if _, err := os.Stat(value); os.IsNotExist(err) {
+			fmt.Printf("[Error] Path does not exist: %s\n", value)
 			fmt.Println("Set operation aborted.")
 			return
 		}
-		value = expanded
 	}
 
 	isGlobal := GlobalViper.IsSet(field) || field == "export_date" || field == "source_dir" || field == "chunks_dir" || field == "ingest_dir"
@@ -229,86 +202,25 @@ func handleSet(parts []string) {
 	}
 }
 
-func expandTilde(path string) string {
-	if strings.HasPrefix(path, "~") {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			if path == "~" {
-				return home
-			}
-			if strings.HasPrefix(path, "~/") {
-				return filepath.Join(home, path[2:])
-			}
-		}
-	}
-	return path
-}
-
+// listFiles provides dynamic path auto-completion for the 'inc' command
 func listFiles(line string) []string {
-	words := strings.Split(line, " ")
-	currentWord := words[len(words)-1]
-
-	expanded := expandTilde(currentWord)
-
-	var searchDir, searchPrefix string
-	if currentWord == "" {
-		searchDir = "."
-		searchPrefix = ""
-	} else if strings.HasSuffix(currentWord, "/") {
-		searchDir = expanded
-		searchPrefix = ""
-	} else if currentWord == "~" {
-		searchDir = expanded
-		searchPrefix = ""
-	} else {
-		searchDir = filepath.Dir(expanded)
-		searchPrefix = filepath.Base(expanded)
+	search := line + "*"
+	if line == "" {
+		search = "*"
 	}
 
-	entries, err := os.ReadDir(searchDir)
+	matches, err := filepath.Glob(search)
 	if err != nil {
 		return []string{}
 	}
 
 	var completions []string
-	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), searchPrefix) {
-			continue
-		}
-		if !strings.HasPrefix(searchPrefix, ".") && strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-
-		var completedWord string
-
-		if currentWord == "" || strings.HasSuffix(currentWord, "/") {
-			completedWord = currentWord + entry.Name()
-		} else if currentWord == "~" {
-			completedWord = "~/" + entry.Name()
+	for _, match := range matches {
+		if stat, err := os.Stat(match); err == nil && stat.IsDir() {
+			completions = append(completions, match+"/")
 		} else {
-			dirPart := filepath.Dir(currentWord)
-			if dirPart == "." && !strings.Contains(currentWord, "/") {
-				completedWord = entry.Name()
-			} else {
-				if strings.HasSuffix(dirPart, "/") {
-					completedWord = dirPart + entry.Name()
-				} else {
-					completedWord = dirPart + "/" + entry.Name()
-				}
-			}
-		}
-
-		if entry.IsDir() {
-			completedWord += "/"
-		}
-
-		if len(words) > 1 {
-			prefix := strings.Join(words[:len(words)-1], " ")
-			completions = append(completions, prefix+" "+completedWord)
-		} else {
-			completions = append(completions, completedWord)
+			completions = append(completions, match)
 		}
 	}
-
 	return completions
 }
