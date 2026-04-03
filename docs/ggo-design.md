@@ -11,6 +11,15 @@ number headings: auto, first-level 2, max 6, skip ^skipped, 0.1.1.1.1
 ### 1.1 The Unified Binary (Cobra CLI) 
 
 ggo is a single, statically compiled Go executable that replaces an entire ecosystem of scattered Python and Bash scripts.
+
+It leverages 
+- cobra
+- readline
+- viper
+- auto completions for commands, paths, fields found in yaml files
+
+### Notebook LM - chat interaction
+
     - `ggo` (no arguments): Drops directly into the interactive stateful REPL.  The repl is discussed later in this document.
     - `ggo unzip [-f] <ingest dir> <date>`: Runs the Takeout/ ChatGPT extraction logic. 
     - `ggo cg-pr-resp [-f] <ingest dir> <source dir> <export date>`: creates prompt replies pairs 
@@ -95,16 +104,16 @@ Configuration is local to the project directory, allowing graceful handling of r
 
 Directory structure: 
 ```
-<project dir>/
-	.ggo
-		config.yaml
-		GEMINI.md
-		ai-<project-name>  # the .ggo internal repo
+~/
+	.ggo/
+		aiggo-<project-name>/  # the .ggo internal lfs repo
+			project.yaml
+			GEMINI.md
 			chats/source/yyyy/mm/<ai-interaction files>
 			includes
-		shadow-repos:   # include commands ingest, their .git is noted
-		 - path-repo1
-		 - path-repo2
+		shadow-repos/   # include commands ingest, their .git is noted
+			path-repo1
+			path-repo2
 ```
 Shadow Repo: Each project gets a parallel shadow Git repo initialized via 
 ```
@@ -180,15 +189,18 @@ The included git files are managed by ggo entirely in the shadow repo.  ggo take
 - `cs <chat-name>`: Start Chat. Sets the active project, chatname and timestamp for the chat, name and initializes the in-memory context window including as of the right timestamp. Without an argument it restarts the chat at the last-chat.  It ingests includes, and starts watching included directories and files
 - `ce`: End Chat. Clears the active chat session, memory, and context window for a chat.
 - `cv`: Execute the viewer (e.g. `less` or and editor) on the chat history, which can also be seen by scrolling up/down in the terminal window.  The viewer provides much needed searching.
+- `cr`: copy last response into the paste buffer as pure text
+- `cw <path>`:  write last response to file. 
 #### 1.6.4 Ingesting
 
 - `inc <path1> <path2>...`: Include. Adds a file or directory subtree to the persistent `.ggo/project.yaml` included list. Automatically ingested into the context.  There are other ingestion commands associated with prompting and associated with file watching.
 
 #### 1.6.5 Prompting & Ingestion
 
-- `p`: Prompt. Opens a multi-line input buffer, ideally with the emacs bindings inside (go to previous line, end of line etc). Ctrl-D sends the prompt to Gemini.open lines can be added with return to separate parts of a reply
+- `p`: Prompt. Toggles to multi-line prompting input buffer, ideally with the emacs bindings inside (go to previous line, end of line etc). Ctrl-D sends the prompt to Gemini.open lines can be added with return to separate parts of a reply
 	- shift select works (if possible) for quick copying, and 
 	- emacs kill/yank commands copy to the system paste buffer
+	- to stop the prompt response sequence type ctrl-D then you are back at the ggo command level. 
 - `pinc <paths...>`: Include + Prompt.  
 	- Adds files to the context, 
 	- opens the multi-line buffer, 
