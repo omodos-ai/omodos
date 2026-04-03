@@ -1,34 +1,67 @@
-/*
-Copyright © 2026 NAME HERE <EMAIL ADDRESS>
-
-*/
 package cmd
 
 import (
+	"bufio"
+	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
 
-
-
-// rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "ggo",
-	Short: "A brief description of your application",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
+	Short: "A strict, Unix-style REPL for knowledge engineering",
+	Run: func(cmd *cobra.Command, args []string) {
+		// 1. Check if the local project file exists
+		projectFilePath := filepath.Join(".ggo", "project.yaml")
+		if _, err := os.Stat(projectFilePath); os.IsNotExist(err) {
+			
+			// 2. Prompt the user
+			fmt.Printf("[?] No .ggo/project.yaml found in current directory.\n")
+			fmt.Printf("Initialize a new ggo project here? [Y/n]: ")
+			
+			reader := bufio.NewReader(os.Stdin)
+			response, _ := reader.ReadString('\n')
+			response = strings.TrimSpace(strings.ToLower(response))
+			
+			if response == "" || response == "y" || response == "yes" {
+				// Scaffold the directory and file
+				os.MkdirAll(".ggo", 0755)
+				
+				// Get the current directory name to use as default project name
+				dir, _ := os.Getwd()
+				defaultName := filepath.Base(dir)
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	// Run: func(cmd *cobra.Command, args []string) { },
+				defaultYaml := fmt.Sprintf(`project_name: "%s"
+code_dirs:
+  - "."
+included_data: []
+shell_cmd: "bash"
+diff_cmd: "emacsclient -c --eval '(ediff-files \"{actual}\" \"{suggestion}\")'"
+`, defaultName)
+
+				err := os.WriteFile(projectFilePath, []byte(defaultYaml), 0644)
+				if err != nil {
+					fmt.Printf("[!] Failed to create project file: %v\n", err)
+				} else {
+					fmt.Printf("[✓] Created %s\n\n", projectFilePath)
+					// Force Viper to read the newly created config immediately
+					InitConfig()
+				}
+			} else {
+				fmt.Println("Skipping project initialization. Running with global defaults.")
+				fmt.Println()
+			}
+		}
+
+		// 3. Launch the REPL!
+		RunREPL()
+		fmt.Println("Welcome to ggo. (REPL scaffolding coming next...)")
+	},
 }
 
-// Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
@@ -37,15 +70,5 @@ func Execute() {
 }
 
 func init() {
-	// Here you will define your flags and configuration settings.
-	// Cobra supports persistent flags, which, if defined here,
-	// will be global for your application.
-
-	// rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.ggo.yaml)")
-
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	cobra.OnInitialize(InitConfig)
 }
-
-
