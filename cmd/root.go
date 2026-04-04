@@ -19,87 +19,90 @@ var rootCmd = &cobra.Command{
 		cwd, _ = filepath.Abs(cwd)
 		defaultName := filepath.Base(cwd)
 		home, _ := os.UserHomeDir()
-		
-		if Project.ProjectName != "" {
-			defaultName = Project.ProjectName
-		}
-		
-		projDir := filepath.Join(home, ".ggo", "ggoai-"+defaultName)
-		projectFilePath := filepath.Join(projDir, "project.yaml")
 
-		// 1. Check if the project is fully scaffolded on disk
-		needsInit := false
-		if _, err := os.Stat(projectFilePath); os.IsNotExist(err) {
-			needsInit = true
-		}
+		needsInit := (Project.ProjectName == "")
 
 		if needsInit {
-			// 2. Prompt the user
-			fmt.Printf("[?] This directory is missing its central ggo scaffolding.\n")
-			fmt.Printf("Initialize ggo project '%s' here? [Y/n]: ", defaultName)
-			
+			fmt.Printf("\n[?] This directory is not tracked by ggo.\n")
+			fmt.Printf("Initialize new ggo project tracking here? [Y/n]: ")
+
 			reader := bufio.NewReader(os.Stdin)
 			response, _ := reader.ReadString('\n')
 			response = strings.TrimSpace(strings.ToLower(response))
-			
+
 			if response == "" || response == "y" || response == "yes" {
-				// Scaffold the directories in the centralized ~/.ggo/ location
+				
+				fmt.Printf("Project name [\033[36m%s\033[0m]: ", defaultName)
+				nameResp, _ := reader.ReadString('\n')
+				nameResp = strings.TrimSpace(nameResp)
+				if nameResp != "" {
+					defaultName = nameResp
+				}
+
+				projDir := filepath.Join(home, ".ggo", "ggoai-"+defaultName)
 				os.MkdirAll(projDir, 0755)
 				os.MkdirAll(filepath.Join(projDir, "chats", "source"), 0755)
 				os.MkdirAll(filepath.Join(projDir, "includes"), 0755)
-				os.MkdirAll(filepath.Join(home, ".ggo", "shadow-repos"), 0755)
-				
-				defaultYaml := `code_dirs:
-  - "."
+
+				// Strictly initialize with NO code directories. Wait for 'inc'.
+				defaultYaml := fmt.Sprintf(`project_name: "%s"
+code_dirs: []
 included_data: []
 shell_cmd: "bash"
 diff_cmd: "emacsclient -c --eval '(ediff-files \"{actual}\" \"{suggestion}\")'"
-`
-				err := os.WriteFile(projectFilePath, []byte(defaultYaml), 0644)
+model_name: "gemini-3.1-pro-preview"
+`, defaultName)
+
+				centralYamlPath := filepath.Join(projDir, "project.yaml")
+				err := os.WriteFile(centralYamlPath, []byte(defaultYaml), 0644)
 				if err != nil {
-					fmt.Printf("[!] Failed to create project file: %v\n", err)
-				} else {
-					fmt.Printf("[✓] Created %s\n", projectFilePath)
-					
-					// Register project in global config using absolute path
-					if Global.Projects == nil {
-						Global.Projects = make(map[string]string)
-					}
-					Global.Projects[defaultName] = cwd
-					GlobalViper.Set("projects", Global.Projects)
-					
-					if err := GlobalViper.WriteConfigAs(filepath.Join(home, ".ggo", "config.yaml")); err != nil {
-						fmt.Printf("[!] Failed to save global config: %v\n", err)
-					}
-
-					// Initialize Git and Git LFS in the central directory
-					initGitLFS(projDir)
-
-					// Force Viper to read the newly created config immediately
-					InitConfig()
+					fmt.Printf("[!] Failed to create project file in central vault: %v\n", err)
+					os.Exit(1)
 				}
+				fmt.Printf("[✓] Created %s\n", centralYamlPath)
+
+				if Global.Projects == nil {
+					Global.Projects = make(map[string]string)
+				}
+				Global.Projects[defaultName] = cwd
+				GlobalViper.Set("projects", Global.Projects)
+
+				if err := GlobalViper.WriteConfigAs(filepath.Join(home, ".ggo", "config.yaml")); err != nil {
+					fmt.Printf("[!] Failed to save global config: %v\n", err)
+				}
+
+				initGitLFS(projDir)
+				InitConfig()
+
+				fmt.Printf("[Info] Project initialized. Waiting for 'inc <path>' to enroll repositories.\n")
+
 			} else {
-				fmt.Println("Skipping project initialization. Running with global defaults.\n")
+				fmt.Println("Skipping project initialization. Exiting.")
+				os.Exit(0)
+			}
+		} else {
+			projDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
+			if _, err := os.Stat(projDir); os.IsNotExist(err) {
+				fmt.Printf("[Info] Restoring missing central vault for project '%s'...\n", Project.ProjectName)
+				os.MkdirAll(projDir, 0755)
+				os.MkdirAll(filepath.Join(projDir, "chats", "source"), 0755)
+				os.MkdirAll(filepath.Join(projDir, "includes"), 0755)
+				initGitLFS(projDir)
 			}
 		}
 
-		// 3. Launch the REPL!
 		RunREPL()
 	},
 }
 
 func initGitLFS(projDir string) {
 	fmt.Printf("Initializing Git LFS in %s...\n", projDir)
-	
-	// git init
 	cmdInit := exec.Command("git", "init")
 	cmdInit.Dir = projDir
 	if err := cmdInit.Run(); err != nil {
 		fmt.Printf("[Warning] Failed to run 'git init': %v\n", err)
 		return
 	}
-
-	// git lfs install
 	cmdLFS := exec.Command("git", "lfs", "install")
 	cmdLFS.Dir = projDir
 	if err := cmdLFS.Run(); err != nil {

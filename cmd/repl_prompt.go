@@ -27,7 +27,7 @@ func handleP(ctx context.Context, l *readline.Instance) {
 			sendAndRender(ctx, prompt)
 		}
 	}
-	fmt.Println("\033[35m=== Exited Chat Mode ===\033[0m\n")
+	fmt.Println("\033[35m=== Exited Chat Mode ===\033[0m")
 }
 
 func handlePS(ctx context.Context, l *readline.Instance) {
@@ -46,7 +46,7 @@ func handlePS(ctx context.Context, l *readline.Instance) {
 func readMultiLine(l *readline.Instance, instructions string) (string, bool) {
 	fmt.Printf("\033[90m%s\033[0m\n", instructions)
 	var sb strings.Builder
-	
+
 	oldPrompt := l.Config.Prompt
 	l.SetPrompt("\033[33m>\033[0m ")
 	defer l.SetPrompt(oldPrompt)
@@ -72,36 +72,41 @@ func sendAndRender(ctx context.Context, prompt string) {
 
 	words := strings.Fields(prompt)
 	subjectLength := 5
-	if len(words) < 5 { subjectLength = len(words) }
+	if len(words) < 5 {
+		subjectLength = len(words)
+	}
 	slug := strings.Join(words[:subjectLength], "_")
 	reg, _ := regexp.Compile("[^a-zA-Z0-9]+")
 	slug = strings.Trim(reg.ReplaceAllString(slug, "_"), "_")
-	if len(slug) > 20 { slug = slug[:20] }
-	if slug == "" { slug = "chat" }
+	if len(slug) > 20 {
+		slug = slug[:20]
+	}
+	if slug == "" {
+		slug = "chat"
+	}
 
-	// Unified execution wrapper
-	ExecuteTransaction(slug, func(timestamp string, now time.Time) error {
+	ExecuteTransaction(slug, func(anchor string, now time.Time) error {
 		reqCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, os.Interrupt)
-		
+
 		go func() {
 			select {
 			case <-sigChan:
 				fmt.Println("\n\033[31m[!] Request aborted by user.\033[0m")
-				cancel() 
+				cancel()
 			case <-reqCtx.Done():
 			}
 		}()
 
 		fmt.Println("\033[90mThinking... (Press Ctrl-C to abort)\033[0m")
-		
+
 		Runtime.IsThinking = true
 		resp, err := SendPrompt(reqCtx, prompt)
 		Runtime.IsThinking = false
-		
+
 		signal.Stop(sigChan)
 
 		if err != nil && err != context.Canceled {
@@ -115,24 +120,24 @@ func sendAndRender(ctx context.Context, prompt string) {
 			} else {
 				fmt.Print(out)
 			}
-			writeMarkdownLedger(now, timestamp, slug, prompt, resp)
+			writeMarkdownLedger(now, anchor, slug, prompt, resp)
 		}
 		return nil
 	})
 }
 
-func writeMarkdownLedger(now time.Time, baseTimestamp, slug, prompt, resp string) {
+func writeMarkdownLedger(now time.Time, anchor, slug, prompt, resp string) {
 	year := fmt.Sprintf("%04d", now.Year())
 	month := fmt.Sprintf("%02d", now.Month())
-	filename := fmt.Sprintf("%s-%s.md", baseTimestamp, slug)
+	filename := fmt.Sprintf("%s-%s.md", anchor, slug)
 	cwd, _ := os.Getwd()
 
 	var md strings.Builder
 	md.WriteString("## AI Interaction\n")
 	md.WriteString(fmt.Sprintf("### Date\n%s\n", now.Format(time.RFC3339)))
-	md.WriteString("### Chat\ndefault\n") 
+	md.WriteString("### Chat\ndefault\n")
 	md.WriteString("### Source\nggo-cli / Gemini 3.1 Pro\n")
-	md.WriteString("### Includes\n-\n") 
+	md.WriteString("### Includes\n-\n")
 	md.WriteString(fmt.Sprintf("### Current working directory\n%s\n", cwd))
 	md.WriteString(fmt.Sprintf("### Subject\n%s\n", strings.ReplaceAll(slug, "_", " ")))
 	md.WriteString("### Context\n-\n")

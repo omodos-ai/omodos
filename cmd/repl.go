@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -31,6 +32,16 @@ func RunREPL() {
 		}
 	}()
 
+	ctx := context.Background()
+
+	// --- UNIX PHILOSOPHY: Detect if we are being piped into ---
+	stat, _ := os.Stdin.Stat()
+	if (stat.Mode() & os.ModeCharDevice) == 0 {
+		RunHeadless(ctx)
+		return
+	}
+
+	// --- Standard Interactive Readline Mode ---
 	var completer = readline.NewPrefixCompleter(
 		readline.PcItem("quit"),
 		readline.PcItem("exit"),
@@ -39,25 +50,25 @@ func RunREPL() {
 		readline.PcItem("show", readline.PcItem("global"), readline.PcItem("project")),
 		readline.PcItem("set",
 			readline.PcItem("model"),
-			readline.PcItem("source_dir"),
-			readline.PcItem("chunks_dir"),
-			readline.PcItem("ingest_dir"),
+			readline.PcItem("source_dir", readline.PcItemDynamic(listFiles)),
+			readline.PcItem("chunks_dir", readline.PcItemDynamic(listFiles)),
+			readline.PcItem("ingest_dir", readline.PcItemDynamic(listFiles)),
 			readline.PcItem("export_date"),
 			readline.PcItem("project_name"),
-			readline.PcItem("shell_cmd"),
-			readline.PcItem("diff_cmd"),
 		),
 		readline.PcItem("inc", readline.PcItemDynamic(listFiles)),
 		readline.PcItem("p"),
 		readline.PcItem("ps"),
 		readline.PcItem("cr"),
-		readline.PcItem("cw"),
+		readline.PcItem("cw", readline.PcItemDynamic(listFiles)),
 		readline.PcItem("gl"),
 		readline.PcItem("gd"),
 		readline.PcItem("gs"),
 	)
 
-	historyPath := filepath.Join(".ggo", "ggo_history")
+	home, _ := os.UserHomeDir()
+	historyPath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "ggo_history")
+
 	l, err := readline.NewEx(&readline.Config{
 		Prompt:            "\033[36mggo>\033[0m ",
 		HistoryFile:       historyPath,
@@ -72,7 +83,6 @@ func RunREPL() {
 	}
 	defer l.Close()
 
-	ctx := context.Background()
 	fmt.Printf("Initializing Gemini API... ")
 	err = InitGemini(ctx)
 	if err != nil {
@@ -95,51 +105,86 @@ func RunREPL() {
 			break
 		}
 
-		line = strings.TrimSpace(line)
-		if line == "" { continue }
-
-		if strings.HasPrefix(line, "!") {
-			fmt.Println("-> Shell execution stubbed.")
-			continue
-		}
-
-		parts := strings.Fields(line)
-		cmd := parts[0]
-
-		switch cmd {
-		case "quit", "exit":
-			fmt.Println("Flushing ledger and exiting...")
-			CleanupTimeMachine()
-			os.Exit(0)
-		case "clear":
-			fmt.Println("-> Stub: Clearing active chat context")
-		case "list":
-			handleList(ctx, parts)
-		case "show":
-			handleShow(parts)
-		case "set":
-			handleSet(parts)
-		case "inc":
-			handleInc(ctx, parts)
-		case "cr":
-			handleCR()
-		case "cw":
-			handleCW(parts)
-		case "gl":
-			handleGL(parts)
-		case "gd":
-			handleGD(parts)
-		case "gs":
-			handleGS(parts)
-		case "p":
-			handleP(ctx, l)
-		case "ps":
-			handlePS(ctx, l)
-		default:
-			sendAndRender(ctx, line)
+		if exit := executeCommand(ctx, line, l); exit {
+			break
 		}
 	}
 	CleanupTimeMachine()
+}
+
+// RunHeadless executes ggo as a script processor without terminal control codes.
+func RunHeadless(ctx context.Context) {
+	fmt.Printf("[ggo] Running in headless script mode...\n")
+	InitGemini(ctx) // Fails silently if no API key during tests
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fmt.Printf("\n> %s\n", line)
+		if exit := executeCommand(ctx, line, nil); exit {
+			break
+		}
+	}
+	// Purposely removed CleanupTimeMachine() here so scripts can leave the working directory in the past state!
+}
+
+func executeCommand(ctx context.Context, line string, l *readline.Instance) bool {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return false
+	}
+
+	if strings.HasPrefix(line, "!") {
+		fmt.Println("-> Shell execution stubbed.")
+		return false
+	}
+
+	parts := strings.Fields(line)
+	cmd := parts[0]
+
+	switch cmd {
+	case "quit", "exit":
+		fmt.Println("Flushing ledger and exiting...")
+		return true
+	case "clear":
+		fmt.Println("-> Stub: Clearing active chat context")
+	case "list":
+		handleList(ctx, parts)
+	case "show":
+		handleShow(parts)
+	case "set":
+		handleSet(parts)
+	case "inc":
+		handleInc(ctx, parts)
+	case "cr":
+		handleCR()
+	case "cw":
+		handleCW(parts)
+	case "gl":
+		handleGL(parts)
+	case "gd":
+		handleGD(parts)
+	case "gs":
+		handleGS(parts)
+	case "p":
+		if l != nil {
+			handleP(ctx, l)
+		} else {
+			fmt.Println("[!] Multiline 'p' disabled in headless mode.")
+		}
+	case "ps":
+		if l != nil {
+			handlePS(ctx, l)
+		} else {
+			fmt.Println("[!] Multiline 'ps' disabled in headless mode.")
+		}
+	default:
+		sendAndRender(ctx, line)
+	}
+	return false
 }
 
 func handleList(ctx context.Context, parts []string) {
@@ -202,79 +247,75 @@ func handleSet(parts []string) {
 			if idx > 0 && idx <= len(View.ModelList) {
 				value = View.ModelList[idx-1]
 			} else {
-				fmt.Println("[Error] Invalid model number. Run 'list models' first.")
+				fmt.Println("[Error] Invalid model number.")
 				return
 			}
 		}
 	}
 
 	if strings.HasSuffix(field, "_dir") || strings.HasSuffix(field, "path") {
-		expanded := expandTilde(value)
-		if _, err := os.Stat(expanded); os.IsNotExist(err) {
-			fmt.Printf("[Error] Path does not exist: %s\n", expanded)
-			fmt.Println("Set operation aborted.")
-			return
-		}
-		value = expanded
+		value = expandTilde(value)
 	}
 
 	isGlobal := GlobalViper.IsSet(field) || field == "export_date" || field == "source_dir" || field == "chunks_dir" || field == "ingest_dir"
 	isProject := ProjectViper.IsSet(field) || field == "project_name" || field == "shell_cmd" || field == "diff_cmd" || field == "model_name"
 
-	// Wrap the config change in our universal transaction engine
-	ExecuteTransaction("set_"+field, func(timestamp string, now time.Time) error {
+	ExecuteTransaction("set_"+field, func(anchor string, now time.Time) error {
 		if isGlobal {
 			GlobalViper.Set(field, value)
-			if err := GlobalViper.WriteConfig(); err != nil {
-				fmt.Printf("[Error] Failed to save global config: %v\n", err)
-			} else {
-				fmt.Printf("[✓] Global updated: %s = %s\n", field, value)
-				InitConfig()
-			}
+			GlobalViper.WriteConfig()
+			InitConfig()
 		} else if isProject {
 			ProjectViper.Set(field, value)
-			os.MkdirAll(".ggo", 0755)
-			if err := ProjectViper.WriteConfigAs(filepath.Join(".ggo", "project.yaml")); err != nil {
-				fmt.Printf("[Error] Failed to save project config: %v\n", err)
-				return err
-			}
-			fmt.Printf("[✓] Project updated: %s = %s\n", field, value)
+			home, _ := os.UserHomeDir()
+			ProjectViper.WriteConfigAs(filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "project.yaml"))
 			InitConfig()
-			
 			if field == "model_name" {
 				UpdateChatModel()
-				fmt.Println("[✓] AI Engine hot-swapped successfully.")
 			}
-		} else {
-			fmt.Printf("[Error] Unknown field: %s\n", field)
 		}
 		return nil
 	})
+	fmt.Printf("[✓] Updated: %s = %s\n", field, value)
 }
 
 func expandTilde(path string) string {
 	if strings.HasPrefix(path, "~") {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			if path == "~" { return home }
-			if strings.HasPrefix(path, "~/") { return filepath.Join(home, path[2:]) }
+		home, _ := os.UserHomeDir()
+		if path == "~" {
+			return home
+		}
+		if strings.HasPrefix(path, "~/") {
+			return filepath.Join(home, path[2:])
 		}
 	}
 	return path
 }
 
 func listFiles(line string) []string {
-	search := line + "*"
-	if line == "" { search = "*" }
+	expanded := expandTilde(line)
+	search := expanded + "*"
+	if expanded == "" {
+		search = "*"
+	}
+
 	matches, err := filepath.Glob(search)
-	if err != nil { return []string{} }
+	if err != nil {
+		return []string{}
+	}
 
 	var completions []string
 	for _, match := range matches {
+		displayPath := match
+		if strings.HasPrefix(line, "~") {
+			home, _ := os.UserHomeDir()
+			displayPath = strings.Replace(match, home, "~", 1)
+		}
+
 		if stat, err := os.Stat(match); err == nil && stat.IsDir() {
-			completions = append(completions, match+"/")
+			completions = append(completions, displayPath+"/")
 		} else {
-			completions = append(completions, match)
+			completions = append(completions, displayPath)
 		}
 	}
 	return completions

@@ -33,7 +33,7 @@ var chunksCmd = &cobra.Command{
 
 		fmt.Println("\n=======================================================")
 		fmt.Printf(" Running Full Parse & Chunk Pipeline for %s\n", exportDate)
-		fmt.Println("=======================================================\n")
+		fmt.Println("=======================================================")
 
 		fmt.Println("--- Phase 1: Extracting JSON to Markdown ---")
 		RunGeminiExtract(sourceDir, geminiExport)
@@ -81,9 +81,9 @@ func RunChunker(sourceDir, outDir string) {
 		if err != nil {
 			continue
 		}
-		
+
 		content := string(contentBytes)
-		words := len(strings.Fields(content)) 
+		words := len(strings.Fields(content))
 
 		if currentWordCount+words > MaxWordsPerChunk && currentWordCount > 0 {
 			writeChunk(outDir, chunkIndex, currentChunkBuilder.String())
@@ -93,7 +93,7 @@ func RunChunker(sourceDir, outDir string) {
 		}
 
 		currentChunkBuilder.WriteString(content)
-		currentChunkBuilder.WriteString("\n\n") 
+		currentChunkBuilder.WriteString("\n\n")
 		currentWordCount += words
 	}
 

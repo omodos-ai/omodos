@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -20,8 +21,8 @@ type ProjectConfig struct {
 	ProjectName  string   `mapstructure:"project_name"`
 	SourceDir    string   `mapstructure:"source_dir"`
 	CodeDirs     []string `mapstructure:"code_dirs"`
-	IncludedData []string `mapstructure:"included_data"` // Restored!
-	ModelName    string   `mapstructure:"model_name"`    // AI Model
+	IncludedData []string `mapstructure:"included_data"`
+	ModelName    string   `mapstructure:"model_name"`
 }
 
 var (
@@ -38,7 +39,6 @@ func InitConfig() {
 		os.Exit(1)
 	}
 
-	// Load Global Config
 	GlobalViper = viper.New()
 	GlobalViper.SetConfigFile(filepath.Join(home, ".ggo", "config.yaml"))
 	GlobalViper.SetConfigType("yaml")
@@ -46,37 +46,28 @@ func InitConfig() {
 		GlobalViper.Unmarshal(&Global)
 	}
 
-	// Preserve identity to prevent amnesia during hot-reloads
-	oldProjName := Project.ProjectName 
+	cwd, _ := os.Getwd()
+	var activeProject string
+	var longestMatch int
 
-	// Load Project Config (Reads locally to figure out what project we are in)
-	ProjectViper = viper.New()
-	ProjectViper.SetConfigFile(filepath.Join(".ggo", "project.yaml"))
-	ProjectViper.SetConfigType("yaml")
-	if err := ProjectViper.ReadInConfig(); err == nil {
-		ProjectViper.Unmarshal(&Project)
+	if Global.Projects != nil {
+		for name, path := range Global.Projects {
+			if strings.HasPrefix(cwd, path) {
+				if len(path) > longestMatch {
+					longestMatch = len(path)
+					activeProject = name
+				}
+			}
+		}
 	}
 
-	// Restore identity if the yaml file was missing it
-	if Project.ProjectName == "" && oldProjName != "" {
-		Project.ProjectName = oldProjName
-		ProjectViper.Set("project_name", oldProjName)
-	}
-
-	// Default Model Fallback & Saving
-	if Project.ModelName == "" {
-		Project.ModelName = "gemini-3.1-pro-preview"
-		ProjectViper.Set("model_name", Project.ModelName)
+	if activeProject != "" {
+		ProjectViper = viper.New()
+		ProjectViper.SetConfigFile(filepath.Join(home, ".ggo", "ggoai-"+activeProject, "project.yaml"))
+		ProjectViper.SetConfigType("yaml")
 		
-		if Project.ProjectName != "" {
-			// Save to centralized LFS repo if the project is already named
-			projDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
-			os.MkdirAll(projDir, 0755)
-			ProjectViper.WriteConfigAs(filepath.Join(projDir, "project.yaml"))
-		} else {
-			// Otherwise fallback to local initialization
-			os.MkdirAll(".ggo", 0755)
-			ProjectViper.WriteConfigAs(filepath.Join(".ggo", "project.yaml"))
+		if err := ProjectViper.ReadInConfig(); err == nil {
+			ProjectViper.Unmarshal(&Project)
 		}
 	}
 }
