@@ -18,12 +18,17 @@ var scriptFS embed.FS
 var force bool
 
 var unzipCmd = &cobra.Command{
-	Use:   "unzip <dir> <date>",
-	Short: "Safely unzips Takeout and ChatGPT exports, bypassing corruption",
-	Args:  cobra.ExactArgs(2),
+	Use:   "unzip",
+	Short: "Safely unzips Takeout and ChatGPT exports based on global config",
+	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		dir := args[0]
-		date := args[1]
+		dir := Global.IngestDir
+		date := Global.ExportDate
+
+		if dir == "" || date == "" {
+			fmt.Println("[Error] Missing global config. Ensure 'ingest_dir' and 'export_date' are set.")
+			os.Exit(1)
+		}
 
 		scriptContent, err := scriptFS.ReadFile("scripts/unzip-ingest.sh")
 		if err != nil {
@@ -38,7 +43,6 @@ var unzipCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Let Go handle the flag logic, pass explicit string to bash
 		forceStr := "false"
 		if force {
 			forceStr = "true"

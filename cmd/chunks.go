@@ -13,20 +13,37 @@ import (
 const MaxWordsPerChunk = 350000
 
 var chunksCmd = &cobra.Command{
-	Use:   "chunks <export-date> <source-dir> <chunks-dir>",
-	Short: "Aggregates and chunks the markdown ledger for NotebookLM",
-	Args:  cobra.ExactArgs(3),
+	Use:   "chunks",
+	Short: "Parses all JSON exports and chunks the markdown ledger for NotebookLM",
+	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		exportDate := args[0]
-		sourceDir := args[1]
-		chunksDir := args[2]
+		exportDate := Global.ExportDate
+		sourceDir := Global.SourceDir
+		chunksDir := Global.ChunksDir
+		ingestDir := Global.IngestDir
 
-		fmt.Printf("\n--- Starting Chunker ---\n")
-		fmt.Printf("Export Date: %s\n", exportDate)
+		if exportDate == "" || sourceDir == "" || chunksDir == "" || ingestDir == "" {
+			fmt.Println("[Error] Missing global config. Ensure export_date, source_dir, chunks_dir, and ingest_dir are set.")
+			os.Exit(1)
+		}
+
+		geminiExport := filepath.Join(ingestDir, "gemini", exportDate+"-export")
+		chatgptExport := filepath.Join(ingestDir, "chatgpt", exportDate+"-export")
+		finalChunksDir := filepath.Join(chunksDir, exportDate)
+
+		fmt.Println("\n=======================================================")
+		fmt.Printf(" Running Full Parse & Chunk Pipeline for %s\n", exportDate)
+		fmt.Println("=======================================================\n")
+
+		fmt.Println("--- Phase 1: Extracting JSON to Markdown ---")
+		RunGeminiExtract(sourceDir, geminiExport)
+		RunChatGPTExtract(sourceDir, chatgptExport)
+
+		fmt.Printf("\n--- Phase 2: Starting Chunker ---\n")
 		fmt.Printf("Source Dir:  %s\n", sourceDir)
-		fmt.Printf("Chunks Dir:  %s\n", chunksDir)
+		fmt.Printf("Chunks Dir:  %s\n", finalChunksDir)
 
-		RunChunker(sourceDir, chunksDir)
+		RunChunker(sourceDir, finalChunksDir)
 	},
 }
 
@@ -35,7 +52,6 @@ func init() {
 }
 
 func RunChunker(sourceDir, outDir string) {
-	// 1. Collect all markdown files
 	var files []string
 	err := filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() && strings.HasSuffix(info.Name(), ".md") {
@@ -53,15 +69,9 @@ func RunChunker(sourceDir, outDir string) {
 		return
 	}
 
-	// 2. Sort files alphabetically.
-	// Since our files are named YYYYMMDDThhmmss-subject.md, this naturally 
-	// interleaves Gemini and ChatGPT into one perfect chronological timeline!
 	sort.Strings(files)
-
-	// 3. Prepare output directory
 	os.MkdirAll(outDir, 0755)
 
-	// 4. Stream and Chunk
 	chunkIndex := 1
 	currentWordCount := 0
 	var currentChunkBuilder strings.Builder
@@ -73,9 +83,8 @@ func RunChunker(sourceDir, outDir string) {
 		}
 		
 		content := string(contentBytes)
-		words := len(strings.Fields(content)) // Fast approximation of word count
+		words := len(strings.Fields(content)) 
 
-		// If this file pushes us over the limit, write the current chunk to disk and reset
 		if currentWordCount+words > MaxWordsPerChunk && currentWordCount > 0 {
 			writeChunk(outDir, chunkIndex, currentChunkBuilder.String())
 			chunkIndex++
@@ -84,11 +93,10 @@ func RunChunker(sourceDir, outDir string) {
 		}
 
 		currentChunkBuilder.WriteString(content)
-		currentChunkBuilder.WriteString("\n\n") // Add breathing room between prompts
+		currentChunkBuilder.WriteString("\n\n") 
 		currentWordCount += words
 	}
 
-	// Write whatever is left in the buffer to the final chunk
 	if currentWordCount > 0 {
 		writeChunk(outDir, chunkIndex, currentChunkBuilder.String())
 	}
