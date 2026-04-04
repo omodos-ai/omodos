@@ -7,33 +7,38 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/chzyer/readline"
 )
 
-// Global state for the REPL to share across files
 var lastAPIResponse string
 
 func RunREPL() {
-	// --- Signal Handling for graceful termination ---
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		<-sigChan
-		fmt.Println("\n[!] Caught termination signal. Cleaning up...")
-		CleanupTimeMachine()
-		os.Exit(0)
+		for sig := range sigChan {
+			if Runtime.IsThinking && sig == os.Interrupt {
+				continue
+			}
+			fmt.Println("\n[!] Caught termination signal. Cleaning up...")
+			CleanupTimeMachine()
+			os.Exit(0)
+		}
 	}()
 
 	var completer = readline.NewPrefixCompleter(
 		readline.PcItem("quit"),
 		readline.PcItem("exit"),
 		readline.PcItem("clear"),
-		readline.PcItem("list", readline.PcItem("projects")),
+		readline.PcItem("list", readline.PcItem("projects"), readline.PcItem("models")),
 		readline.PcItem("show", readline.PcItem("global"), readline.PcItem("project")),
 		readline.PcItem("set",
+			readline.PcItem("model"),
 			readline.PcItem("source_dir"),
 			readline.PcItem("chunks_dir"),
 			readline.PcItem("ingest_dir"),
@@ -67,7 +72,6 @@ func RunREPL() {
 	}
 	defer l.Close()
 
-	// Initialize Gemini API
 	ctx := context.Background()
 	fmt.Printf("Initializing Gemini API... ")
 	err = InitGemini(ctx)
@@ -92,9 +96,7 @@ func RunREPL() {
 		}
 
 		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
+		if line == "" { continue }
 
 		if strings.HasPrefix(line, "!") {
 			fmt.Println("-> Shell execution stubbed.")
@@ -112,7 +114,7 @@ func RunREPL() {
 		case "clear":
 			fmt.Println("-> Stub: Clearing active chat context")
 		case "list":
-			handleList(parts)
+			handleList(ctx, parts)
 		case "show":
 			handleShow(parts)
 		case "set":
@@ -134,27 +136,33 @@ func RunREPL() {
 		case "ps":
 			handlePS(ctx, l)
 		default:
-			// Single line prompt fallback
 			sendAndRender(ctx, line)
 		}
 	}
 	CleanupTimeMachine()
 }
 
-func handleList(parts []string) {
-	if len(parts) < 2 || parts[1] != "projects" {
-		fmt.Println("Usage: list projects")
+func handleList(ctx context.Context, parts []string) {
+	if len(parts) < 2 {
+		fmt.Println("Usage: list <projects|models>")
 		return
 	}
-	fmt.Println("\n--- Tracked ggo Projects ---")
-	if len(Global.Projects) == 0 {
-		fmt.Println("No projects tracked yet.")
-	} else {
-		for name, path := range Global.Projects {
-			fmt.Printf("- %-15s [%s]\n", name, path)
+	target := parts[1]
+	if target == "projects" {
+		fmt.Println("\n--- Tracked ggo Projects ---")
+		if len(Global.Projects) == 0 {
+			fmt.Println("No projects tracked yet.")
+		} else {
+			for name, path := range Global.Projects {
+				fmt.Printf("- %-15s [%s]\n", name, path)
+			}
 		}
+		fmt.Println()
+	} else if target == "models" {
+		FetchAndListModels(ctx)
+	} else {
+		fmt.Println("Unknown list target. Use 'projects' or 'models'.")
 	}
-	fmt.Println()
 }
 
 func handleShow(parts []string) {
@@ -162,7 +170,6 @@ func handleShow(parts []string) {
 		fmt.Println("Usage: show <global|project>")
 		return
 	}
-
 	target := parts[1]
 	if target == "global" {
 		fmt.Println("\n--- Global Config ---")
@@ -186,9 +193,20 @@ func handleSet(parts []string) {
 		fmt.Println("Usage: set <field> <value>")
 		return
 	}
-
 	field := parts[1]
 	value := strings.Join(parts[2:], " ")
+
+	if field == "model" || field == "model_name" {
+		field = "model_name"
+		if idx, err := strconv.Atoi(value); err == nil {
+			if idx > 0 && idx <= len(View.ModelList) {
+				value = View.ModelList[idx-1]
+			} else {
+				fmt.Println("[Error] Invalid model number. Run 'list models' first.")
+				return
+			}
+		}
+	}
 
 	if strings.HasSuffix(field, "_dir") || strings.HasSuffix(field, "path") {
 		expanded := expandTilde(value)
@@ -201,42 +219,45 @@ func handleSet(parts []string) {
 	}
 
 	isGlobal := GlobalViper.IsSet(field) || field == "export_date" || field == "source_dir" || field == "chunks_dir" || field == "ingest_dir"
-	isProject := ProjectViper.IsSet(field) || field == "project_name" || field == "shell_cmd" || field == "diff_cmd"
+	isProject := ProjectViper.IsSet(field) || field == "project_name" || field == "shell_cmd" || field == "diff_cmd" || field == "model_name"
 
-	if isGlobal {
-		GlobalViper.Set(field, value)
-		if err := GlobalViper.WriteConfig(); err != nil {
-			fmt.Printf("[Error] Failed to save global config: %v\n", err)
-		} else {
-			fmt.Printf("[✓] Global updated: %s = %s\n", field, value)
-			InitConfig()
-		}
-	} else if isProject {
-		ProjectViper.Set(field, value)
-		if err := ProjectViper.WriteConfig(); err != nil {
-			err = ProjectViper.WriteConfigAs(filepath.Join(".ggo", "project.yaml"))
-			if err != nil {
-				fmt.Printf("[Error] Failed to save project config: %v\n", err)
-				return
+	// Wrap the config change in our universal transaction engine
+	ExecuteTransaction("set_"+field, func(timestamp string, now time.Time) error {
+		if isGlobal {
+			GlobalViper.Set(field, value)
+			if err := GlobalViper.WriteConfig(); err != nil {
+				fmt.Printf("[Error] Failed to save global config: %v\n", err)
+			} else {
+				fmt.Printf("[✓] Global updated: %s = %s\n", field, value)
+				InitConfig()
 			}
+		} else if isProject {
+			ProjectViper.Set(field, value)
+			os.MkdirAll(".ggo", 0755)
+			if err := ProjectViper.WriteConfigAs(filepath.Join(".ggo", "project.yaml")); err != nil {
+				fmt.Printf("[Error] Failed to save project config: %v\n", err)
+				return err
+			}
+			fmt.Printf("[✓] Project updated: %s = %s\n", field, value)
+			InitConfig()
+			
+			if field == "model_name" {
+				UpdateChatModel()
+				fmt.Println("[✓] AI Engine hot-swapped successfully.")
+			}
+		} else {
+			fmt.Printf("[Error] Unknown field: %s\n", field)
 		}
-		fmt.Printf("[✓] Project updated: %s = %s\n", field, value)
-		InitConfig()
-	} else {
-		fmt.Printf("[Error] Unknown field: %s\n", field)
-	}
+		return nil
+	})
 }
 
 func expandTilde(path string) string {
 	if strings.HasPrefix(path, "~") {
 		home, err := os.UserHomeDir()
 		if err == nil {
-			if path == "~" {
-				return home
-			}
-			if strings.HasPrefix(path, "~/") {
-				return filepath.Join(home, path[2:])
-			}
+			if path == "~" { return home }
+			if strings.HasPrefix(path, "~/") { return filepath.Join(home, path[2:]) }
 		}
 	}
 	return path
@@ -244,14 +265,9 @@ func expandTilde(path string) string {
 
 func listFiles(line string) []string {
 	search := line + "*"
-	if line == "" {
-		search = "*"
-	}
-
+	if line == "" { search = "*" }
 	matches, err := filepath.Glob(search)
-	if err != nil {
-		return []string{}
-	}
+	if err != nil { return []string{} }
 
 	var completions []string
 	for _, match := range matches {

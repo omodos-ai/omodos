@@ -7,54 +7,49 @@ import (
 	"strings"
 
 	"github.com/google/generative-ai-go/genai"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
 
-var (
-	geminiClient *genai.Client
-	chatSession  *genai.ChatSession
-)
+var chatSession *genai.ChatSession
 
-// InitGemini boots up the client and starts a stateful chat session.
 func InitGemini(ctx context.Context) error {
-	// 1. Resolve the API Key
-	apiKey := ""
-	if Global.APIKeyPath != "" {
-		keyBytes, err := os.ReadFile(Global.APIKeyPath)
-		if err == nil {
-			apiKey = strings.TrimSpace(string(keyBytes))
-		}
-	}
-
-	// Fallback to environment variable if file is missing or empty
+	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
-		apiKey = os.Getenv("GEMINI_API_KEY")
+		return fmt.Errorf("GEMINI_API_KEY not set")
 	}
 
-	if apiKey == "" {
-		return fmt.Errorf("no API key found in %s or GEMINI_API_KEY env var", Global.APIKeyPath)
-	}
-
-	// 2. Initialize the Client
 	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
 	if err != nil {
-		return fmt.Errorf("failed to create client: %v", err)
+		return err
 	}
-	geminiClient = client
-
-	// 3. Initialize the Model and Stateful Chat
-	model := client.GenerativeModel("gemini-2.5-pro")
-	// You can adjust temperature here if needed: model.SetTemperature(0.2)
 	
-	chatSession = model.StartChat()
-
+	Runtime.GeminiClient = client
+	UpdateChatModel() // Initialize the session
+	
 	return nil
 }
 
-// SendPrompt sends a message to the active chat session and returns the response.
+// UpdateChatModel cleanly swaps the engine while preserving conversational history
+func UpdateChatModel() {
+	if Runtime.GeminiClient == nil { return }
+	
+	model := Runtime.GeminiClient.GenerativeModel(Project.ModelName)
+	
+	var oldHistory []*genai.Content
+	if chatSession != nil {
+		oldHistory = chatSession.History
+	}
+	
+	chatSession = model.StartChat()
+	if oldHistory != nil {
+		chatSession.History = oldHistory
+	}
+}
+
 func SendPrompt(ctx context.Context, prompt string) (string, error) {
 	if chatSession == nil {
-		return "", fmt.Errorf("chat session is not initialized")
+		return "", fmt.Errorf("chat session not initialized")
 	}
 
 	resp, err := chatSession.SendMessage(ctx, genai.Text(prompt))
@@ -62,20 +57,47 @@ func SendPrompt(ctx context.Context, prompt string) (string, error) {
 		return "", err
 	}
 
-	return extractText(resp), nil
-}
-
-// extractText safely pulls the string content out of the SDK's response payload
-func extractText(resp *genai.GenerateContentResponse) string {
 	var sb strings.Builder
-	for _, cand := range resp.Candidates {
-		if cand.Content != nil {
-			for _, part := range cand.Content.Parts {
-				if text, ok := part.(genai.Text); ok {
-					sb.WriteString(string(text))
-				}
-			}
+	for _, part := range resp.Candidates[0].Content.Parts {
+		if txt, ok := part.(genai.Text); ok {
+			sb.WriteString(string(txt))
 		}
 	}
-	return sb.String()
+	return sb.String(), nil
+}
+
+func FetchAndListModels(ctx context.Context) {
+	if Runtime.GeminiClient == nil {
+		fmt.Println("[Error] Gemini API not initialized.")
+		return
+	}
+
+	fmt.Println("Fetching available models...")
+	iter := Runtime.GeminiClient.ListModels(ctx)
+	
+	View.ModelList = []string{}
+	idx := 1
+
+	fmt.Println("\n--- Available Gemini Models ---")
+	for {
+		m, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			fmt.Printf("[Error] Failed to fetch models: %v\n", err)
+			return
+		}
+
+		cleanName := strings.TrimPrefix(m.Name, "models/")
+		View.ModelList = append(View.ModelList, cleanName)
+
+		if cleanName == Project.ModelName {
+			fmt.Printf("[\033[32m%d\033[0m] \033[36m%s\033[0m (Active)\n", idx, cleanName)
+		} else {
+			fmt.Printf("[\033[32m%d\033[0m] %s\n", idx, cleanName)
+		}
+		idx++
+	}
+	fmt.Println()
 }

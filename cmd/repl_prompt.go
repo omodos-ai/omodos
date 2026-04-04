@@ -70,12 +70,6 @@ func sendAndRender(ctx context.Context, prompt string) {
 		return
 	}
 
-	// 1. Transaction START: Capture "Before" State
-	now := time.Now().UTC()
-	baseTimestamp := now.Format("20060102T150405Z")
-	beforeTag := baseTimestamp + "-before"
-	afterTag := baseTimestamp + "-after"
-
 	words := strings.Fields(prompt)
 	subjectLength := 5
 	if len(words) < 5 { subjectLength = len(words) }
@@ -85,49 +79,46 @@ func sendAndRender(ctx context.Context, prompt string) {
 	if len(slug) > 20 { slug = slug[:20] }
 	if slug == "" { slug = "chat" }
 
-	fmt.Printf("\033[90m[ggo] Securing 'before' transaction state (%s)...\033[0m\n", beforeTag)
-	CommitGlobalTransaction(fmt.Sprintf("before: %s", slug), beforeTag)
+	// Unified execution wrapper
+	ExecuteTransaction(slug, func(timestamp string, now time.Time) error {
+		reqCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
 
-	// 2. The API Call
-	reqCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt)
+		
+		go func() {
+			select {
+			case <-sigChan:
+				fmt.Println("\n\033[31m[!] Request aborted by user.\033[0m")
+				cancel() 
+			case <-reqCtx.Done():
+			}
+		}()
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt)
-	
-	go func() {
-		select {
-		case <-sigChan:
-			fmt.Println("\n\033[31m[!] Request aborted by user.\033[0m")
-			cancel() 
-		case <-reqCtx.Done():
+		fmt.Println("\033[90mThinking... (Press Ctrl-C to abort)\033[0m")
+		
+		Runtime.IsThinking = true
+		resp, err := SendPrompt(reqCtx, prompt)
+		Runtime.IsThinking = false
+		
+		signal.Stop(sigChan)
+
+		if err != nil && err != context.Canceled {
+			fmt.Printf("[API Error] %v\n", err)
+			return err
+		} else if err == nil {
+			lastAPIResponse = resp
+			out, renderErr := glamour.Render(resp, "dark")
+			if renderErr != nil {
+				fmt.Printf("\n\033[32mGemini:\033[0m\n%s\n\n", strings.TrimSpace(resp))
+			} else {
+				fmt.Print(out)
+			}
+			writeMarkdownLedger(now, timestamp, slug, prompt, resp)
 		}
-	}()
-
-	fmt.Println("\033[90mThinking... (Press Ctrl-C to abort)\033[0m")
-	resp, err := SendPrompt(reqCtx, prompt)
-	signal.Stop(sigChan)
-
-	if err != nil && err != context.Canceled {
-		fmt.Printf("[API Error] %v\n", err)
-	} else if err == nil {
-		lastAPIResponse = resp
-		out, renderErr := glamour.Render(resp, "dark")
-		if renderErr != nil {
-			fmt.Printf("\n\033[32mGemini:\033[0m\n%s\n\n", strings.TrimSpace(resp))
-		} else {
-			fmt.Print(out)
-		}
-	}
-
-	// 3. Transaction END: Capture "After" State (Executed even on abort to catch side effects)
-	fmt.Printf("\033[90m[ggo] Securing 'after' transaction state (%s)...\033[0m\n", afterTag)
-	CommitGlobalTransaction(fmt.Sprintf("after: %s", slug), afterTag)
-
-	// 4. Write Markdown Ledger (Only if call succeeded)
-	if err == nil {
-		writeMarkdownLedger(now, baseTimestamp, slug, prompt, resp)
-	}
+		return nil
+	})
 }
 
 func writeMarkdownLedger(now time.Time, baseTimestamp, slug, prompt, resp string) {
@@ -150,12 +141,10 @@ func writeMarkdownLedger(now time.Time, baseTimestamp, slug, prompt, resp string
 
 	mdContent := md.String()
 
-	// Global Source Dir
 	globalDir := filepath.Join(Global.SourceDir, year, month)
 	os.MkdirAll(globalDir, 0755)
 	os.WriteFile(filepath.Join(globalDir, filename), []byte(mdContent), 0644)
 
-	// Project Source Dir
 	home, _ := os.UserHomeDir()
 	centralRepoDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
 	projectSourceDir := filepath.Join(centralRepoDir, "chats", "source", year, month)
