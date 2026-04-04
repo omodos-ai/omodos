@@ -27,7 +27,49 @@ It leverages
 - viper
 - auto completions for commands, paths, fields found in yaml files
 
-### Notebook LM - chat interaction
+###  Batch processing of ChatGPT / Gemini and  Notebook LM
+
+#### Streamlined execution
+
+The `ggo` batch pipeline unifies raw `.zip` exports from Google Takeout (Gemini) and ChatGPT into chronologically ordered Markdown ledgers and NotebookLM-ready chunks.
+
+**1. Download & Placement**
+
+Request your data exports from Google Takeout and OpenAI. Place the resulting `.zip` files directly into your configured ingest directory. Do not manually extract them.
+
+**2. Global Path Configuration**
+
+Ensure your global directories are configured in the REPL (these default to `~/.ggo/config.yaml`):
+
+Plaintext
+
+```
+ggo> set ingest_dir ~/.ggo/ingest     # Where the .zip files live
+ggo> set source_dir ~/.ggo/source     # Where parsed Markdown ledgers are saved
+ggo> set chunks_dir ~/.ggo/chunks     # Where aggregated chunk files are generated
+```
+
+**3. Set the Export Date**
+
+LLM providers often date their exports inconsistently (e.g., ChatGPT exports may be dated two days prior). Unify the pipeline under a single date using the dedicated CLI command:
+
+Bash
+
+```
+$ ggo set-export-date YYYY-MM-DD
+```
+
+**4. Execute the Pipeline**
+
+Run the two master commands. `unzip` safely extracts and organizes the archives based on the export date. `chunks` automatically triggers both parsers (Gemini and ChatGPT) and aggregates the output into `<350k` word chronological chunks.
+
+Bash
+
+```
+$ ggo unzip
+$ ggo chunks
+```
+#### Older manual commands - probably not functional anymore
 
     - `ggo` (no arguments): Drops directly into the interactive stateful REPL.  The repl is discussed later in this document.
     - `ggo unzip [-f] <ingest dir> <date>`: Runs the Takeout/ ChatGPT extraction logic. 
