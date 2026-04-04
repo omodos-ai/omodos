@@ -8,6 +8,15 @@ number headings: auto, first-level 2, max 6, skip ^skipped, 0.1.1.1.1
 
 ## 1 Architecture & Design Specification (v1.1)
 
+### The purpose and structure of ggo
+
+ggo is a single command line utility that manages AI interactions for development, chat, notebookLM archival queries in a single place.  Its key architectural drivers are:
+
+- smoothly transition between the tools with round trip data to e.g. get a summary out of NotebookLM and use it with all referenced prompts as a new feed for chat.
+- For development, work in projects with a collection of repos attached to it and use a chat tool that removes the "copy-paste" cycle by direct integration with your unix shells, editors etc.
+- Work in a transactional model: each step with the AI that delivers information or changes data in your projects creates a small transaction across shadow repositories that retain the old state, remember exactly what operation was performed and what context was available to the AI agent at that time.  This avoids uncertainty and confusion. 
+- The tool has less ability than e.g. Cursor in terms of managing intelligent substitutions across a number of files, but far more capability than Cursor in terms of managing a context of reasoning, design and coding information and gradually progress through implementation and bug fixing with this.
+
 ### 1.1 The Unified Binary (Cobra CLI) 
 
 ggo is a single, statically compiled Go executable that replaces an entire ecosystem of scattered Python and Bash scripts.
@@ -52,6 +61,8 @@ ggo-cli / Gemini Pro
 ### Includes
 -
 - 
+### Current working directory
+<path>
 ### Subject
 <Subject Slug derived from the first 5 words of the prompt>
 ### Context
@@ -69,11 +80,31 @@ For interactions between gemini chat, ChatGPT and the ggo generated chats variou
 `ggo` works on projects.  Each project has further configurations.  All projects and their suspected location is listed globally so that projects can be listed and found. 
 
 Projects contain:
-- a list of chats
-- a local `git-lfs` repo per project which has working code directories as _shadow directories_
-- numerous tags (commit hashes) in the `.ggo` repo to roll back, restart, resynchronize with the API
-- included directories and files, which are loaded when a project is started in `ggo`
-- GEMINI.md instructions
+- a per project configuration file
+- a local `git-lfs` repo which holds:
+	- per project configuration
+	- all prompts, responses, and state given to the LLM as context
+	- commit transactions updated after every interaction
+- A project also has code directories as _shadow directories_ these directories
+	- if you make changes and if an AI makes changes to your directories a commit with a unique timestamp keeps the before and after state in a small commit
+- the numerous commits in the git lfs repo and the shadow directories are navigated by time stamps and the history can be searched, e.g. if in a prompt you say "this now works (or broke)" that prompt is time stamped, can be searched with ripgrep and the state exactly before and after is available to you to restore your working repos.   
+- ggo only affects your working repos for rollbacks, its entire project state is held under ~/.ggo and subdirectories.
+- It maintains GEMINI.md instructions so that your interaction is along the style you want
+
+The transaction engine is not 100% atomic but practically very safe and works as follows. We start with handling the "ai interaction transaction state" when a user starts an ai transaction. That transaction gets a timestamp (at the start first, because if it aborts, there often still is useful information or side effects).  At that point `ggo` creates a commit and tag in the shadow and lfs repos: this commit has the user's changes up to the transaction, the tag is the timestamp with the word "before".
+
+We also need second associated (system managed) "after transaction" timestamp which we catch when the transaction completes or aborts.  Here the state is committed again, using the same timestamp with the word "after".  The chat records can be added to the `sources` one single time but should have the before and after timestamp in them.
+
+We then update git lfs, and the shadow directories with independent git transactions and move them forward we use the "after timestamp everywhere as a tag. If no changes are made, we still introduce a tag on the shadow directories so that the state remains lock step.
+
+Not every transaction is fully defined yet, e.g. the ones associated with using editors, replacing files etc. 
+
+The `gs` command can roll back and restore of working repos based on these tags.  If we restore to the before tag, we get the user's state back before the transaction was started, if we use the after tag, we get the users and AI's state back.  When we do this, we commit the working repo (for safety), and if it's easily possible also stash it, and again use the timestamp to find the past. I would associate a readable time tag and the state count number from the shadow directories associated with it also. If `gs` goes back to the head, then it can clean up its two commits and two tags.
+
+The data in the shadow repositories is simply updated with rsync.  This is a double belt and suspenders system that appears to have few gaps (your battery can run out). 
+
+**NOTE** we could roll back the ingest of state entirely, clear out put everything back, but remember, all chat prompts would also have to be sent back and forth. If the API backend does live with that, then we make the AI api nearly transactional as well. Going forward with gs is simply a matter of attaching the prompts again, going backward requires a "wipe". However, this decision is subtle. I think the real working experience is "Gemini we are build X but broke Y in step 5. I'm rolling back the code to 5, so we start fixing Y from there again - but we try to complete X as well". That speaks against rolling the chat state back in lock step.
+
 #### 1.3.1 Configuration & State Managing configuration 
 
 - `config-set [project] [field:value]]`  
@@ -106,7 +137,7 @@ Directory structure:
 ```
 ~/
 	.ggo/
-		ai-<project-name>/  # the .ggo internal lfs repo
+		ggoai-<project-name>/  # the .ggo internal lfs repo
 			project.yaml
 			GEMINI.md
 			chats/source/yyyy/mm/<ai-interaction files>
@@ -133,6 +164,7 @@ Each project has an array of chats.  New chats are started at new timestamps whe
 
 YAML
 - project_name: "ggo"
+- model_name:
 - shell_cmd: "bash" # Can be swapped to "ssh -t dev-vm 'bash'" for remote work
 - diff_cmd: "emacsclient -c --eval '(ediff-files \"{actual}\" \"{suggestion}\")'"
 - includes: `[dir1, dir2, ... , file1, .. file2]`
