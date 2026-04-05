@@ -47,11 +47,20 @@ func parseChatHistory(chatPath string) []*genai.Content {
 
 	blocks := strings.Split(string(contentBytes), "## AI Interaction")
 	for _, block := range blocks {
+		cIdx := strings.Index(block, "### Context\n")
 		pIdx := strings.Index(block, "### Prompt\n")
 		rIdx := strings.Index(block, "### Response\n")
 
 		if pIdx != -1 && rIdx != -1 && pIdx < rIdx {
 			prompt := strings.TrimSpace(block[pIdx+len("### Prompt\n") : rIdx])
+
+			// Re-hydrate the XML JIT context if it was recorded in this turn
+			if cIdx != -1 && cIdx < pIdx {
+				ctxStr := strings.TrimSpace(block[cIdx+len("### Context\n") : pIdx])
+				if ctxStr != "-" && ctxStr != "" {
+					prompt = ctxStr + "\n\n" + prompt
+				}
+			}
 
 			respRaw := block[rIdx+len("### Response\n"):]
 			lastDash := strings.LastIndex(respRaw, "---")

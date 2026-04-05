@@ -88,7 +88,11 @@ func Gitsync(p SyncParams) error {
 
 		exec.Command("git", "-C", absWork, "checkout", "-f", baseHash).Run()
 		exec.Command("git", "-C", p.ShadowDir, "checkout", "-f", overlayHash).Run()
-		SyncDirectory(p.ShadowDir, absWork)
+
+		err = SyncDirectory(p.ShadowDir, absWork)
+		if err != nil {
+			return fmt.Errorf("failed to sync shadow to working tree: %v", err)
+		}
 
 		patchPath := filepath.Join(absWork, ".ggo_staged.patch")
 		if stat, err := os.Stat(patchPath); err == nil && stat.Size() > 0 {
@@ -119,6 +123,7 @@ func ExecuteTransaction(slug string, action func(anchor string, now time.Time) e
 
 	if isInit {
 		SnapshotCentral("system: project initialized", anchor+"-init")
+		SyncAllShadows(anchor, "init", "system: project initialized")
 	}
 
 	fmt.Printf("\033[90m[ggo] Locking transaction %s...\033[0m\n", anchor)

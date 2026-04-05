@@ -23,6 +23,10 @@ func runScript(script string) {
 }
 
 func TestEndToEndTimeMachine(t *testing.T) {
+	// FIX: Save and restore the CWD so rsync doesn't crash in subsequent tests
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+
 	tempDir, err := os.MkdirTemp("", "ggo-e2e-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)

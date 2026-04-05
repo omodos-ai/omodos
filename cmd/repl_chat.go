@@ -105,23 +105,86 @@ func readMultiLine(l *readline.Instance, instructions string) (string, bool) {
 	return strings.TrimSpace(sb.String()), true
 }
 
+func buildJITContextAndSync() string {
+	if len(Project.IncludedData) == 0 {
+		return "-"
+	}
+
+	var xmlBuilder strings.Builder
+	modifiedCount := 0
+	home, _ := os.UserHomeDir()
+	centralIncludesDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "includes")
+	cwd, _ := os.Getwd()
+
+	for _, targetPath := range Project.IncludedData {
+		filepath.Walk(targetPath, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			if strings.HasPrefix(info.Name(), ".") && info.Name() != "." {
+				return filepath.SkipDir
+			}
+
+			absPath, _ := filepath.Abs(path)
+			relPath, err := filepath.Rel(cwd, absPath)
+			if err != nil || strings.HasPrefix(relPath, "..") {
+				return nil
+			}
+
+			baselinePath := filepath.Join(centralIncludesDir, relPath)
+
+			liveBytes, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			if strings.Contains(string(liveBytes), "\x00") {
+				return nil
+			}
+
+			baselineBytes, _ := os.ReadFile(baselinePath)
+
+			if string(liveBytes) != string(baselineBytes) {
+				xmlBuilder.WriteString(fmt.Sprintf("<file path=\"%s\" state=\"modified_since_last_turn\" type=\"full_text\">\n%s\n</file>\n", path, string(liveBytes)))
+				modifiedCount++
+				os.MkdirAll(filepath.Dir(baselinePath), 0755)
+				os.WriteFile(baselinePath, liveBytes, 0644)
+			}
+			return nil
+		})
+	}
+
+	if modifiedCount > 0 {
+		return fmt.Sprintf("<system_context>\n%s</system_context>", strings.TrimSpace(xmlBuilder.String()))
+	}
+	return "-"
+}
+
 func sendAndRender(ctx context.Context, prompt string) {
 	activeChat := GetActiveChat()
 
 	fmt.Printf("\033[90mThinking...\033[0m\n\n")
 
-	response, err := SendPrompt(ctx, prompt)
+	// 1. Compute the JIT Context Protocol
+	contextStr := buildJITContextAndSync()
+
+	apiPrompt := prompt
+	if contextStr != "-" {
+		apiPrompt = contextStr + "\n\n" + prompt
+	}
+
+	// 2. Dispatch to Gemini
+	response, err := SendPrompt(ctx, apiPrompt)
 	if err != nil {
 		fmt.Printf("\033[31m[API Error]\033[0m %v\n", err)
 		return
 	}
 	lastAPIResponse = response
 
-	// 1. RAW TERMINAL OUTPUT
+	// 3. RAW TERMINAL OUTPUT
 	fmt.Println(response)
 	fmt.Println()
 
-	// 2. METADATA EXTRACTION FOR SCHEMA
+	// 4. METADATA EXTRACTION FOR SCHEMA
 	now := time.Now().UTC()
 	dateISO := now.Format("2006-01-02T15:04:05Z")
 	filenameTime := now.Format("20060102T150405")
@@ -163,9 +226,7 @@ func sendAndRender(ctx context.Context, prompt string) {
 		slug = "interaction"
 	}
 
-	contextStr := "-"
-
-	// 3. BUILD THE EXACT DESIGN DOCUMENT SCHEMA
+	// 5. BUILD THE EXACT DESIGN DOCUMENT SCHEMA
 	record := fmt.Sprintf(`## AI Interaction
 ### Date
 %s
@@ -190,7 +251,7 @@ ggo-cli / %s
 ---
 `, dateISO, activeChat, modelName, includesStr, cwd, subjectStr, contextStr, prompt, response)
 
-	// 4. APPEND TO ACTIVE CHAT
+	// 6. APPEND TO ACTIVE CHAT
 	home, _ := os.UserHomeDir()
 	chatPath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "chats", "chat-"+activeChat)
 	if !strings.HasSuffix(chatPath, ".md") {
@@ -202,7 +263,7 @@ ggo-cli / %s
 		f.Close()
 	}
 
-	// 5. WRITE TO /tmp/sources ARCHIVE
+	// 7. WRITE TO /tmp/sources ARCHIVE
 	sourcesDir := filepath.Join("/tmp", "sources", year, month)
 	os.MkdirAll(sourcesDir, 0755)
 

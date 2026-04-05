@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // findGitRoot walks up the directory tree until it finds a .git file or directory.
@@ -56,9 +57,10 @@ func handleGitAddRepo(parts []string) {
 
 	fmt.Printf("\033[32m[✓] Enrolled Git repository into Time Machine:\033[0m %s\n", gitRoot)
 
-	// Capture the baseline instantly
-	anchor := "20060102T150405Z" // Time package is not imported here, but we can rely on standard Git sync
-	SyncAllShadows(anchor, "init", "init: manual repository enrollment baseline")
+	// Capture the baseline instantly using the unified transaction engine
+	ExecuteTransaction("enroll_repo", func(anchor string, now time.Time) error {
+		return nil
+	})
 }
 
 func getLedgerTags() []string {

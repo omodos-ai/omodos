@@ -13,6 +13,7 @@ number headings: auto, first-level 2, max 6, skip ^skipped, 0.1.1.1.1
 - [ ] file ai records in source
 - [ ] screen response to emacs for control characters
 - [ ] snapshot, write files
+- [x] fix the time machine test ✅ 2026-04-05
 - [ ] copy snippets from response to pastebuffer (OS Clipboard integration)
 - [x] context-inc, inc: for context ✅ 2026-04-05
 - [x] git-add-repo, gr: register a time machine repo ✅ 2026-04-05
@@ -23,7 +24,7 @@ number headings: auto, first-level 2, max 6, skip ^skipped, 0.1.1.1.1
 - [ ] responses with snippets automatically placed into the paste buffers by ggo
 - [ ] deprecate `<export date>` from the `*-pr-resp` commands. 
 - [ ] chats subdir in `~/.ggo/project/chats/<chatname.md>`
-- [ ] - [ ] Create mark/yank shell commands to greatly ease creating pb snippets
+- [ ] Create mark/yank shell commands to greatly ease creating pb snippets
 - [ ] Implement the `parseChatHistory (ggo mdchat-pr-resp)` Hydration Engine to natively construct the `genai.History` object from the active markdown ledger.
 - [ ] Fix the Time Machine untracked-file restoration edge cases (without using destructive resets).
 - [ ] Write the `Context Injector` to dynamically gather `git diff` outputs and explicitly included text at the moment of dispatch.
@@ -402,23 +403,31 @@ Used by the Time Machine to perfectly recreate past states without destroying hu
 
 If a rogue AI command (or human error) deletes the entire Working Repo, the user simply runs `gs <tag>`. ggo detects the missing directory and executes a standard `git clone` from the Shadow Vault to restore the foundation before applying the requested overlay. Because Git ignores the `refs/ggo/` namespace by default, the clone perfectly restores the human history, branches, and tags, while automatically leaving all the AI's overlay commits behind in the vault.
 
-### 6.2 Automatic Context Updates
+### 6.2 Automatic Context Updates (The JIT Full-State Protocol)
 
-**Concept: The Just-In-Time Diff** To keep the LLM context razor-sharp and avoid token bloat, `ggo` does not resend entire files every time you type a prompt. Instead, it only sends what you have changed in your explicitly included files (`inc`), calculated precisely at the moment you hit Enter.
+**Concept: The Just-In-Time Full-State XML Protocol** To keep the LLM context mathematically aligned with your desk and avoid hallucination drift, `ggo` uses a Just-In-Time (JIT) protocol. Because LLMs lack internal "patch engines", feeding them stacked diffs over a long chat session severely degrades their mental model of the codebase. Instead, leveraging modern massive context windows, `ggo` detects _that_ an included file changed, but injects the _full updated text_ using a strict machine-to-machine XML schema.
+
+This creates a rigid semantic boundary: the LLM understands everything inside `<system_context>` is the undisputed, current physical reality of the disk, and everything outside is the user's intent.
 
 **How it Works:**
 
-1. **The Baseline:** When you explicitly include a file or directory (`inc src/main.go`), `ggo` copies it into the central `~/.ggo/ggoai-<project>/includes/` directory and commits it to the central Git-LFS repository. This establishes the AI's baseline knowledge.
+1. **The Baseline:** When you explicitly include a file (`inc src/main.go`), `ggo` copies it into the central `~/.ggo/ggoai-<project>/includes/` directory. This establishes the baseline state.
     
-2. **The Just-In-Time Check:** When you submit a new prompt, `ggo` instantly compares the live, physical files on your desk against their baseline copies in the central repo.
+2. **The JIT Check:** The exact moment you submit a new chat prompt, `ggo` compares the live, physical files on your desk against their baseline copies.
     
-3. **The Delta Injection:** If you modified an included file in your editor, `ggo` generates a clean `git diff` of just those changes. This diff is automatically injected into the prompt schema under `### Context`.
+3. **The XML Protocol Injection:** If a tracked file has been modified, `ggo` extracts its _complete current text_, wraps it in a rigid XML schema, and silently prepends it to your prompt.
     
-4. **The New Baseline:** After the prompt is dispatched, `ggo` silently syncs the central repo with your new file states, advancing the baseline.
+    XML
     
-
-This mechanism mathematically guarantees the AI always knows exactly what you just typed in your editor, without running heavy background daemons, without relying on IDE plugins, and without bloating the API request with unmodified code.
-
+    ```
+    <system_context>
+        <file path="src/main.go" state="modified_since_last_turn" type="full_text">
+        // [The absolute, complete text of the file as it currently exists on disk]
+        </file>
+    </system_context>
+    ```
+    
+1. **The New Baseline:** Immediately after the prompt is dispatched to the API, `ggo` silently copies the updated live files back to the central vault. This resets the baseline, ensuring the full text is only injected on the exact turn immediately following a local modification.
 
 ### 6.3 Chats
 
