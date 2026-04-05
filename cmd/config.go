@@ -65,7 +65,7 @@ func InitConfig() {
 		ProjectViper = viper.New()
 		ProjectViper.SetConfigFile(filepath.Join(home, ".ggo", "ggoai-"+activeProject, "project.yaml"))
 		ProjectViper.SetConfigType("yaml")
-		
+
 		if err := ProjectViper.ReadInConfig(); err == nil {
 			ProjectViper.Unmarshal(&Project)
 		}

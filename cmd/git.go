@@ -55,11 +55,11 @@ func Gitsync(p SyncParams) error {
 		if len(patchOut) > 0 {
 			os.WriteFile(patchPath, patchOut, 0644)
 		} else {
-			os.Remove(patchPath) 
+			os.Remove(patchPath)
 		}
 
 		SyncDirectory(absWork, p.ShadowDir)
-		os.Remove(patchPath) 
+		os.Remove(patchPath)
 
 		exec.Command("git", "-C", p.ShadowDir, "add", "-A").Run()
 		commitMsg := fmt.Sprintf("[branch: %s] [base: %s] %s", branch, hash, p.Message)
@@ -67,7 +67,7 @@ func Gitsync(p SyncParams) error {
 
 		overlayHashOut, _ := exec.Command("git", "-C", p.ShadowDir, "rev-parse", "HEAD").Output()
 		overlayHash := strings.TrimSpace(string(overlayHashOut))
-		
+
 		exec.Command("git", "-C", p.ShadowDir, "update-ref", refPath, overlayHash).Run()
 
 	} else if p.Direction == "ShadowToWorking" {
@@ -78,7 +78,7 @@ func Gitsync(p SyncParams) error {
 		}
 
 		msgOut, _ := exec.Command("git", "-C", p.ShadowDir, "log", "-1", "--format=%B", overlayHash).Output()
-		
+
 		re := regexp.MustCompile(`\[base:\s*([a-f0-9]+)\]`)
 		matches := re.FindStringSubmatch(string(msgOut))
 		if len(matches) < 2 {
@@ -144,7 +144,7 @@ func SyncAllShadows(anchor, phase, msg string) {
 	for _, dir := range Project.CodeDirs {
 		absDir, _ := filepath.Abs(dir)
 		repoID := getRepoID(absDir)
-		
+
 		shadowDir := filepath.Join(home, ".ggo", "shadow-repos", repoID)
 
 		err := Gitsync(SyncParams{
@@ -186,7 +186,7 @@ func SyncDirectory(src, dst string) error {
 func getRepoID(dir string) string {
 	absDir, _ := filepath.Abs(dir)
 	base := filepath.Base(absDir)
-	
+
 	// Try to get the root commit hash (the mathematical genesis of the repo)
 	cmd := exec.Command("git", "-C", absDir, "rev-list", "--max-parents=0", "HEAD")
 	out, err := cmd.Output()
@@ -196,9 +196,14 @@ func getRepoID(dir string) string {
 			return fmt.Sprintf("%s-%s", base, hashes[0][:8])
 		}
 	}
-	
+
 	// Fallback for non-git dirs or completely empty repositories with no commits yet
 	safe := strings.ReplaceAll(strings.TrimPrefix(absDir, "/"), "/", "_")
 	safe = strings.ReplaceAll(safe, ":", "_") // Windows compat
 	return safe
+}
+
+// CleanupTimeMachine acts as a teardown hook for the REPL shutdown
+func CleanupTimeMachine() {
+	// Active daemon pipes are gone, but this hook is reserved for clearing stale UI lockfiles.
 }

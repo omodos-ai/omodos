@@ -34,14 +34,12 @@ func RunREPL() {
 
 	ctx := context.Background()
 
-	// --- UNIX PHILOSOPHY: Detect if we are being piped into ---
 	stat, _ := os.Stdin.Stat()
 	if (stat.Mode() & os.ModeCharDevice) == 0 {
 		RunHeadless(ctx)
 		return
 	}
 
-	// --- Standard Interactive Readline Mode ---
 	var completer = readline.NewPrefixCompleter(
 		readline.PcItem("quit"),
 		readline.PcItem("exit"),
@@ -56,9 +54,13 @@ func RunREPL() {
 			readline.PcItem("export_date"),
 			readline.PcItem("project_name"),
 		),
+		readline.PcItem("context-include", readline.PcItemDynamic(listFiles)),
 		readline.PcItem("inc", readline.PcItemDynamic(listFiles)),
-		readline.PcItem("p"),
-		readline.PcItem("ps"),
+		readline.PcItem("git-add-repo", readline.PcItemDynamic(listFiles)),
+		readline.PcItem("gr", readline.PcItemDynamic(listFiles)),
+		readline.PcItem("cc"), // Chat Create/Switch
+		readline.PcItem("p"),  // Multi-line prompt
+		readline.PcItem("ps"), // Multi-line prompt + Clipboard
 		readline.PcItem("cr"),
 		readline.PcItem("cw", readline.PcItemDynamic(listFiles)),
 		readline.PcItem("gl"),
@@ -105,6 +107,7 @@ func RunREPL() {
 			break
 		}
 
+		// Pass the readline instance down so 'p' and 'ps' can take control of it
 		if exit := executeCommand(ctx, line, l); exit {
 			break
 		}
@@ -112,10 +115,9 @@ func RunREPL() {
 	CleanupTimeMachine()
 }
 
-// RunHeadless executes ggo as a script processor without terminal control codes.
 func RunHeadless(ctx context.Context) {
 	fmt.Printf("[ggo] Running in headless script mode...\n")
-	InitGemini(ctx) // Fails silently if no API key during tests
+	InitGemini(ctx)
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
@@ -124,11 +126,11 @@ func RunHeadless(ctx context.Context) {
 			continue
 		}
 		fmt.Printf("\n> %s\n", line)
+		// Headless mode passes nil for the readline instance
 		if exit := executeCommand(ctx, line, nil); exit {
 			break
 		}
 	}
-	// Purposely removed CleanupTimeMachine() here so scripts can leave the working directory in the past state!
 }
 
 func executeCommand(ctx context.Context, line string, l *readline.Instance) bool {
@@ -157,18 +159,12 @@ func executeCommand(ctx context.Context, line string, l *readline.Instance) bool
 		handleShow(parts)
 	case "set":
 		handleSet(parts)
-	case "inc":
-		handleInc(ctx, parts)
-	case "cr":
-		handleCR()
-	case "cw":
-		handleCW(parts)
-	case "gl":
-		handleGL(parts)
-	case "gd":
-		handleGD(parts)
-	case "gs":
-		handleGS(parts)
+	case "context-include", "inc":
+		handleContextInclude(ctx, parts)
+	case "git-add-repo", "gr":
+		handleGitAddRepo(parts)
+	case "cc":
+		handleCC(parts)
 	case "p":
 		if l != nil {
 			handleP(ctx, l)
@@ -181,7 +177,18 @@ func executeCommand(ctx context.Context, line string, l *readline.Instance) bool
 		} else {
 			fmt.Println("[!] Multiline 'ps' disabled in headless mode.")
 		}
+	case "cr":
+		handleCR()
+	case "cw":
+		handleCW(parts)
+	case "gl":
+		handleGL(parts)
+	case "gd":
+		handleGD(parts)
+	case "gs":
+		handleGS(parts)
 	default:
+		// Unrecognized command becomes a single-line chat prompt
 		sendAndRender(ctx, line)
 	}
 	return false

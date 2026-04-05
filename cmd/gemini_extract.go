@@ -92,11 +92,11 @@ func RunGeminiExtract(sourceDir, exportDir string) {
 			decoded = strings.ReplaceAll(decoded, "<em>", "*")
 			decoded = strings.ReplaceAll(decoded, "</em>", "*")
 			decoded = strings.ReplaceAll(decoded, "<br>", "\n")
-			
+
 			re := regexp.MustCompile(`<[^>]*>`)
 			responseText = re.ReplaceAllString(decoded, "")
 			responseText = strings.TrimSpace(responseText)
-			
+
 		} else if rec.Content != "" {
 			responseText = rec.Content
 		} else {
@@ -108,11 +108,17 @@ func RunGeminiExtract(sourceDir, exportDir string) {
 		timestamp := promptTime.Format("20060102T150405")
 
 		safeSubject := makeSafeFilenameGemini(prompt)
-		if len(safeSubject) > 30 { safeSubject = safeSubject[:30] }
-		if safeSubject == "" { safeSubject = "chat" }
+		if len(safeSubject) > 30 {
+			safeSubject = safeSubject[:30]
+		}
+		if safeSubject == "" {
+			safeSubject = "chat"
+		}
 
 		cleanTitle := strings.ReplaceAll(prompt, "\n", " ")
-		if len(cleanTitle) > 50 { cleanTitle = cleanTitle[:50] + "..." }
+		if len(cleanTitle) > 50 {
+			cleanTitle = cleanTitle[:50] + "..."
+		}
 
 		filename := fmt.Sprintf("%s-%s.md", timestamp, safeSubject)
 		targetPath := filepath.Join(sourceDir, year, month)

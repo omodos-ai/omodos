@@ -14,7 +14,7 @@ func handleCR() {
 		fmt.Println("[!] No recent response to copy.")
 		return
 	}
-	
+
 	textToCopy := cleanForClipboard(lastAPIResponse)
 	err := clipboard.WriteAll(textToCopy)
 	if err != nil {
@@ -33,10 +33,10 @@ func handleCW(parts []string) {
 		fmt.Println("[!] No recent response to write.")
 		return
 	}
-	
+
 	path := parts[1]
 	textToWrite := cleanForClipboard(lastAPIResponse)
-	
+
 	err := os.WriteFile(path, []byte(textToWrite), 0644)
 	if err != nil {
 		fmt.Printf("[Error] Failed to write file: %v\n", err)
@@ -58,7 +58,7 @@ func cleanForClipboard(text string) string {
 		}
 		return strings.TrimSpace(sb.String())
 	}
-	
+
 	// 2. If no code blocks, strip standard markdown formatting roughly
 	text = strings.ReplaceAll(text, "**", "")
 	text = strings.ReplaceAll(text, "__", "")

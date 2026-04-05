@@ -66,7 +66,9 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 
 	for _, jsonFile := range jsonFiles {
 		file, err := os.Open(jsonFile)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		bytes, _ := io.ReadAll(file)
 		file.Close()
 
@@ -74,14 +76,18 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 		json.Unmarshal(bytes, &convos)
 
 		for _, conv := range convos {
-			if conv.Title == "" || conv.CurrentNode == "" { continue }
+			if conv.Title == "" || conv.CurrentNode == "" {
+				continue
+			}
 
 			// Traverse DAG
 			var linearTimeline []Node
 			currID := conv.CurrentNode
 			for currID != "" {
 				node, exists := conv.Mapping[currID]
-				if !exists { break }
+				if !exists {
+					break
+				}
 				linearTimeline = append(linearTimeline, node)
 				currID = node.Parent
 			}
@@ -99,17 +105,25 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 			var currentModel string = "unknown"
 
 			writePair := func() {
-				if currentPrompt == "" && len(currentResponseParts) == 0 { return }
-				
-				if promptTime.IsZero() { promptTime = time.Unix(int64(conv.CreateTime), 0) }
+				if currentPrompt == "" && len(currentResponseParts) == 0 {
+					return
+				}
+
+				if promptTime.IsZero() {
+					promptTime = time.Unix(int64(conv.CreateTime), 0)
+				}
 
 				year := fmt.Sprintf("%04d", promptTime.Year())
 				month := fmt.Sprintf("%02d", promptTime.Month())
 				timestamp := promptTime.Format("20060102T150405")
 
 				safeSubject := makeSafeFilenameCG(conv.Title)
-				if len(safeSubject) > 30 { safeSubject = safeSubject[:30] }
-				if safeSubject == "" { safeSubject = "chat" }
+				if len(safeSubject) > 30 {
+					safeSubject = safeSubject[:30]
+				}
+				if safeSubject == "" {
+					safeSubject = "chat"
+				}
 
 				cleanTitle := strings.ReplaceAll(conv.Title, "\n", " ")
 
@@ -160,29 +174,39 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 			}
 
 			for _, node := range linearTimeline {
-				if node.Message == nil || node.Message.Author.Role == "system" { continue }
+				if node.Message == nil || node.Message.Author.Role == "system" {
+					continue
+				}
 
 				role := node.Message.Author.Role
 				var textParts []string
 				for _, part := range node.Message.Content.Parts {
-					if strPart, ok := part.(string); ok { textParts = append(textParts, strPart) }
+					if strPart, ok := part.(string); ok {
+						textParts = append(textParts, strPart)
+					}
 				}
 				text := strings.Join(textParts, "\n")
 
 				if node.Message.Metadata != nil {
-					if m, ok := node.Message.Metadata["model_slug"].(string); ok { currentModel = m }
-					
+					if m, ok := node.Message.Metadata["model_slug"].(string); ok {
+						currentModel = m
+					}
+
 					if files, ok := node.Message.Metadata["files"].([]interface{}); ok {
 						for _, f := range files {
 							if fMap, ok := f.(map[string]interface{}); ok {
-								if name, ok := fMap["name"].(string); ok { capturedAttachments = append(capturedAttachments, name) }
+								if name, ok := fMap["name"].(string); ok {
+									capturedAttachments = append(capturedAttachments, name)
+								}
 							}
 						}
 					}
 					if atts, ok := node.Message.Metadata["attachments"].([]interface{}); ok {
 						for _, a := range atts {
 							if aMap, ok := a.(map[string]interface{}); ok {
-								if name, ok := aMap["name"].(string); ok { capturedAttachments = append(capturedAttachments, name) }
+								if name, ok := aMap["name"].(string); ok {
+									capturedAttachments = append(capturedAttachments, name)
+								}
 							}
 						}
 					}
@@ -191,9 +215,13 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 				if role == "user" {
 					writePair() // Flush previous turn
 					currentPrompt = text
-					if node.Message.CreateTime > 0 { promptTime = time.Unix(int64(node.Message.CreateTime), 0) }
+					if node.Message.CreateTime > 0 {
+						promptTime = time.Unix(int64(node.Message.CreateTime), 0)
+					}
 				} else if role == "assistant" || role == "tool" {
-					if text != "" { currentResponseParts = append(currentResponseParts, text) }
+					if text != "" {
+						currentResponseParts = append(currentResponseParts, text)
+					}
 				}
 			}
 			writePair() // Flush final turn

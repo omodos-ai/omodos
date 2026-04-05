@@ -2,22 +2,49 @@
 number headings: auto, first-level 2, max 6, skip ^skipped, 0.1.1.1.1
 ---
 
-
-
 #  ggo - a stateful go cli for ML collaboration 
 
-## 1 Architecture & Design Specification (v1.1)
+## 1 Remaining Todo 
 
-### 1.1 The purpose and structure of ggo
+- [ ] grab updated context, package up for sending
+- [ ] update context
+- [ ] introduce chats subdirectory with `<name>.md` chat files
+- [ ] fast resume with Gemini context (Hydration Engine)
+- [ ] file ai records in source
+- [ ] screen response to emacs for control characters
+- [ ] snapshot, write files
+- [ ] copy snippets from response to pastebuffer (OS Clipboard integration)
+- [x] context-inc, inc: for context ✅ 2026-04-05
+- [x] git-add-repo, gr: register a time machine repo ✅ 2026-04-05
+- [ ] parse a chat.md file into source records and add into the source tree `ggo mdchat-pr-resp <ingest file> <source dir>`
+- [ ] chat buffer with emacs control
+- [ ] mark yank in terminal
+- [ ] sync shadow and central repo to GH
+- [ ] responses with snippets automatically placed into the paste buffers by ggo
+- [ ] deprecate `<export date>` from the `*-pr-resp` commands. 
+- [ ] chats subdir in `~/.ggo/project/chats/<chatname.md>`
+- [ ] - [ ] Create mark/yank shell commands to greatly ease creating pb snippets
+- [ ] Implement the `parseChatHistory (ggo mdchat-pr-resp)` Hydration Engine to natively construct the `genai.History` object from the active markdown ledger.
+- [ ] Fix the Time Machine untracked-file restoration edge cases (without using destructive resets).
+- [ ] Write the `Context Injector` to dynamically gather `git diff` outputs and explicitly included text at the moment of dispatch.
+- [ ] Solidify the `GEMINI.md` system prompt instructing the LLM on `<file path>` output usage.
+- [ ] Write the autonomous file-writer interceptor for macro-edits.
+- [ ] Integrate `github.com/atotto/clipboard` to handle automatic pushing of command/code payloads to the user's paste buffer.
+- [ ] Strip control characters prior to clipboard injection or markdown ledger appending.
 
-ggo is a single command line utility that manages AI interactions for development, chat, notebookLM archival queries in a single place.  Its key architectural drivers are:
 
-- smoothly transition between the tools with round trip data to e.g. get a summary out of NotebookLM and use it with all referenced prompts as a new feed for chat.
-- For development, work in projects with a collection of repos attached to it and use a chat tool that removes the "copy-paste" cycle by direct integration with your unix shells, editors etc.
-- Work in a transactional model: each step with the AI that delivers information or changes data in your projects creates a small transaction across shadow repositories that retain the old state, remember exactly what operation was performed and what context was available to the AI agent at that time.  This avoids uncertainty and confusion. 
-- The tool has less ability than e.g. Cursor in terms of managing intelligent substitutions across a number of files, but far more capability than Cursor in terms of managing a context of reasoning, design and coding information and gradually progress through implementation and bug fixing with this.
+## 2 Architecture & Design Specification (v1.1)
 
-### 1.2 The Unified Binary (Cobra CLI) 
+Ggo has the following purposes.  
+- bulk data management across development projects, chats and notebookLM
+- frictionless Unix command style assistance with authoring and coding
+- safety of state (time machine like) if AI is making modifications to projects
+- executing chats in users favourite editors.
+
+
+IDE plugins can be built easily with ggo, but this is not our focus. Ggo does not replace smart substitution mechanisms such as offered by Cursor with LSP.
+
+### 2.1 The Unified Binary (Cobra CLI) 
 
 ggo is a single, statically compiled Go executable that replaces an entire ecosystem of scattered Python and Bash scripts.
 
@@ -27,65 +54,14 @@ It leverages
 - viper
 - auto completions for commands, paths, fields found in yaml files
 
-### 1.3 Batch processing of ChatGPT / Gemini and  Notebook LM
+### 2.2 ai steps and ai records
 
-#### 1.3.1 Streamlined execution
+Every ggo interaction is called an ai step.  Each ai step creates a timestamped ai record.  These records can be reproduced from e.g. ChatGPT exports, Google My Activity Takeout for Gemini and ggo's own markdown chat files. 
 
-The `ggo` batch pipeline unifies raw `.zip` exports from Google Takeout (Gemini) and ChatGPT into chronologically ordered Markdown ledgers and NotebookLM-ready chunks.
+The records are kept in a `<source>/yyyy/mm` directory structure.
 
-**1. Download & Placement**
+Append-Only Rule: The `<source>` export log ai records act as an immutable ledger. They are strictly append-only. If `gs` is used to roll back the shadow git repository, the log is never reverted; instead, a new entry is appended recording the rollback event to preserve the complete narrative.
 
-Request your data exports from Google Takeout and OpenAI. Place the resulting `.zip` files directly into your configured ingest directory. Do not manually extract them.
-
-**2. Global Path Configuration**
-
-Ensure your global directories are configured in the REPL (these default to `~/.ggo/config.yaml`):
-
-Plaintext
-
-```
-ggo> set ingest_dir ~/.ggo/ingest     # Where the .zip files live
-ggo> set source_dir ~/.ggo/source     # Where parsed Markdown ledgers are saved
-ggo> set chunks_dir ~/.ggo/chunks     # Where aggregated chunk files are generated
-```
-
-**3. Set the Export Date**
-
-LLM providers often date their exports inconsistently (e.g., ChatGPT exports may be dated two days prior). Unify the pipeline under a single date using the dedicated CLI command:
-
-Bash
-
-```
-$ ggo set-export-date YYYY-MM-DD
-```
-
-**4. Execute the Pipeline**
-
-Run the two master commands. `unzip` safely extracts and organizes the archives based on the export date. `chunks` automatically triggers both parsers (Gemini and ChatGPT) and aggregates the output into `<350k` word chronological chunks.
-
-Bash
-
-```
-$ ggo unzip
-$ ggo chunks
-```
-#### 1.3.2 Older manual commands - probably not functional anymore
-
-    - `ggo` (no arguments): Drops directly into the interactive stateful REPL.  The repl is discussed later in this document.
-    - `ggo unzip [-f] <ingest dir> <date>`: Runs the Takeout/ ChatGPT extraction logic. 
-    - `ggo cg-pr-resp [-f] <ingest dir> <source dir> <export date>`: creates prompt replies pairs 
-    - `ggo gemini-pr-resp [-f] <ingest dir> <source dir> <export date>`: creates prompt replies pairs 
-    - `ggo chunks <date> <source-dir> <chunks-dir>`: creates prompt reply pairs in `<export-dir>/<date>` (to avoid overwriting), and chunks them for import in NLM. 
-    - `ggo extract <source dir> <infile> <outfile>`: creates a full summary of all AI interactions associated with a NLM report, based on timestamps 
-    - `ggo sync`: Triggers a git push/pull on your ~/ai/chats/source repository. The `<source>` directory is append only. 
-
-### 1.4 The NotebookLM Markdown Specification
-
-To ensure NotebookLM can perfectly compress tens of thousands of prompts into structured knowledge, ggo natively bypasses Google Takeout for active sessions and strictly enforces this schema for every REPL turn.
-
-Append-Only Rule: The `<source>` export logs act as an immutable ledger. They are strictly append-only. If `gs` is used to roll back the shadow git repository, the log is never reverted; instead, a new entry is appended recording the rollback event to preserve the complete narrative.
-
-For ai interactions generated by ggo, these are created both in the source directory _and_ in the `.ggo/<project>/chats/source/yyyy/mm` subdirectories of the ggo repo, so that format changes or errors in the bulk command tools can be recovered.  For this purpose, we can simply add a `ggo nlm-sync` command that executes an `rsync` against the sources directory
 
 File naming specification: 
 ```
@@ -115,400 +91,359 @@ ggo-cli / Gemini Pro
 <The exact raw markdown returned by the Gemini API>
 
 ```
-### 1.5 ggo state
 
-For interactions between gemini chat, ChatGPT and the ggo generated chats various directories contain important state. Global variables are held under `~/.ggo/`
+### 2.3 Macro and Micro Edits (XML Schema & OS Clipboard)
 
-`ggo` works on projects.  Each project has further configurations.  All projects and their suspected location is listed globally so that projects can be listed and found. 
+`ggo` treats file modification purely as a text-generation API problem.
+- **Macro-Edits:** For large autonomous file writes, `ggo` strictly enforces a `<file path="...">` XML schema in the `GEMINI.md` prompt. `ggo` intercepts this structured output and safely writes the file to the filesystem natively.
+- **Micro-Edits:** For smaller surgical edits, bash scripts, or refactors, `ggo` isolates the generated code blocks and writes them to the OS Clipboard. The user's native editor or terminal consumes the clipboard output.
+
+
+## 3 Bulk AI data processing
+
+ggo is a single command line utility that manages AI interactions for development, chat, notebookLM archival queries in a single place.  Its key architectural drivers are:
+
+- smoothly transition between the tools with round trip data to e.g. get a summary out of NotebookLM and use it with all referenced prompts as a new feed for chat.
+- For development, one works in projects with a collection of repos and chats attached to it. The tool removes the "copy-paste" cycle by preparing paste buffers in the system clipboard (with history, like Maccy) and it can directly write replacement files to the disk
+- Work in a transactional model: each _ai step_ with the AI that delivers information or changes data in your projects, is timestamped, creates a small transaction across shadow repositories that retain the old state, remember exactly (i) the modified state of the working repo's before the AI changed them (ii) the modified state after the ai modified the working repos.  There is precise rollback and restore possible in the working repos (including staged files, branch tags etc) by using the systems' shadow records.   This avoids uncertainty and confusion. 
+- the tool runs chat in the users favourite editor with a data and control pipe.  For each ai step an _ai record_ is generated that is timestamped and becomes available in an archive
+- The tool avoids doing anything that existing tools already do well, like clipboard managing, having special commands in editors.  It is a buffer between the normal developer toolchaing and the AI.  It has less ability than e.g. Cursor in terms of managing intelligent substitutions across a number of files, but far more capability than Cursor in terms of managing a context of reasoning, design and coding information and gradually progress through implementation and bug fixing with this.
+
+### 3.1 Streamlined execution
+
+The `ggo` batch pipeline unifies raw `.zip` exports from Google Takeout (Gemini) and ChatGPT into chronologically ordered Markdown ledgers and NotebookLM-ready chunks.
+
+**1. Download & Placement**
+
+Request your data exports from Google Takeout and OpenAI. Place the resulting `.zip` files directly into your configured ingest directory. Do not manually extract them.
+
+**2. Global Path Configuration**
+
+Ensure your global directories are configured in the REPL (these default to `~/.ggo/config.yaml`):
+
+Plaintext
+
+```
+ggo> set ingest_dir ~/.ggo/ingest     # Where the .zip files live
+ggo> set source_dir ~/.ggo/source     # Where parsed Markdown ledgers are saved
+ggo> set chunks_dir ~/.ggo/chunks     # Where aggregated chunk files are 
+```
+
+**3. Set the Export Date**
+
+LLM providers often date their exports inconsistently (e.g., ChatGPT exports may be dated two days prior). Unify the pipeline under a single date using the dedicated CLI command:
+
+Bash
+
+```
+$ ggo set-export-date YYYY-MM-DD
+```
+
+**4. Execute the Pipeline**
+
+Run the two master commands. `unzip` safely extracts and organizes the archives based on the export date. `chunks` automatically triggers both parsers (Gemini and ChatGPT) and aggregates the output into `<350k` word chronological chunks.
+
+Bash
+
+```
+$ ggo unzip
+$ ggo chunks
+```
+#### 3.1.1 Older manual commands - probably not functional anymore
+
+    - `ggo` (no arguments): Drops directly into the interactive stateful REPL.  The repl is discussed later in this document.
+    - `ggo unzip [-f] <ingest dir> <date>`: Runs the Takeout/ ChatGPT extraction logic. 
+    - `ggo cg-pr-resp [-f] <ingest dir> <source dir> <export date>`: creates prompt replies pairs 
+    - `ggo gemini-pr-resp [-f] <ingest dir> <source dir> <export date>`: creates prompt replies pairs 
+    - `ggo chunks <date> <source-dir> <chunks-dir>`: creates prompt reply pairs in `<export-dir>/<date>` (to avoid overwriting), and chunks them for import in NLM. 
+    - `ggo extract <source dir> <infile> <outfile>`: creates a full summary of all AI interactions associated with a NLM report, based on timestamps 
+    - `ggo sync`: Triggers a git push/pull on your ~/ai/chats/source repository. The `<source>` directory is append only. 
+
+## 4 Ggo for authoring and development
+
+### 4.1 The ggo purpose and core workflows
+
+The ggo suite has been built to support AI interactions with an automatically growing included context and chats. The creative aspect for which ggo was built is detailed AI assisted intellectual editing, authoring (bug fixing, paper authoring), and creating new projects. It is assumed users have working repos for their work, and ggo will leave them as unaffected as is possible.
+
+Ggo and the AI backend interact in just a few ways with the users system:
+
+- ai steps however small create ai records for provenance and later reprocessing (e.g. with NotebookLM).
+- ggo can write source files the AI generates (through an explicit locally executed command). Before it does, it saves state in the shadow repos.
+- ggo can put snippets, like patches, commands into the systems paste buffers (we assume there is a system with a history ring of "copied" text).
+- ggo executes a chat in the users favourite editor through a data and control pipe, which appears superior for most development work to web tools and applications like ChatGPT and Gemini. We screen LLM text for accidental control characters that could be unsafe in text buffers.
+    
+
+As such, ggo removes friction and provides safety. It is not a cursor like plugin, it is not a trivial to use web page, but it can be 100% keyboard driven.
+
+#### 4.1.1 **ggo chats** 
+
+For ai steps generated by ggo, ai records are created both in the global `<source>` directory and in the `~/.ggo/<project>/chats/chatname.md` file in the ggo configuration repo, so that format changes or errors in the bulk command tools can be recovered. A command can re-create the global `<sources>` with the chat records (`ggo mdchat-pr-resp <chatname>`).
+
+#### 4.1.2 **The Context Injector** 
+
+ggo intentionally avoids running complex background fsnotify daemons to prevent noisy auto-save triggers. Instead, it uses a Just-In-Time Context Injector. When a prompt is submitted, ggo dynamically bundles:
+
+- All explicitly attached read-only context (inc / context-include files).
+- Files changed in directories in the working repos.
+- Files in the central repo's .gitignore are not updated. This guarantees the context sent to the API is perfectly synchronized with the user's explicit intent at the exact moment of dispatch. We avoid context bloat by not injecting entire repos into the context, even though the entire repos do get shadow repos (that is local).
+    
+
+#### 4.1.3 **Macro and Micro Edits (XML Schema & OS Clipboard)** 
+
+ggo treats file modification purely as a text-generation API problem.
+
+- **Macro-Edits:** For large autonomous file writes, ggo strictly enforces a `<file path="...">` XML schema in the GEMINI.md prompt. ggo intercepts this structured output and safely writes the file to the filesystem natively.
+    
+- **Micro-Edits & The OS Clipboard:** ggo acts strictly as an orchestrator and decouples entirely from editors and terminals by utilizing the OS Clipboard (e.g., Maccy, atotto/clipboard) as the universal pipe. ggo does not spawn background shells, handle native ediff commands, or manage complex IPC sockets - with one exception: running a chat in the users favourite editor through a pipe (and with a control channel). If the LLM generates a code block or shell command, ggo pushes the raw string directly to the OS clipboard. The user manually pastes it into their terminal or editor of choice, maintaining absolute control. Before ggo writes AI responses to chat buffers or clipboards, it strictly sanitizes the output of terminal escape sequences and Emacs control codes to prevent environment corruption.
+    
+#### 4.1.4 **The Core Workflows**
+
+- **Workflow 1: The Macro Generator:** Action: You prompt ggo to generate 3 new files based on a design pattern. Result: The LLM streams back the XML payload. ggo natively parses the `<file path="...">` blocks and writes the files to disk, immediately enveloping the change in a Time Machine ledger update.
+    
+- **Workflow 2: The Micro-Edit & Clipboard Delivery:** Action: You prompt ggo for the 5 shell commands needed to restructure a directory. Result: The LLM responds. ggo strips out any dangerous control characters, logs the response to the .md chat ledger, and pushes the bash block directly into your OS Clipboard for manual pasting.
+    
+- **Workflow 3: The Time Machine Reversion:** Action: The AI generates a buggy rewrite and you notice it immediately. Result: You run `gs 0`. ggo reverts the target codebase to the precise foundation hash and applies the original pristine overlay via rsync. The chat log in `.ggo` persists to record the failure.
+    
+
+### 4.2 Understanding the ggo concepts and configuration and data
+
+ggo works on projects. Each project has further configurations. All projects and their suspected location is listed globally under `~/.ggo` so that projects can be listed and found. Ggo can be run from anywhere and can trivially be amended to work remotely. The configuration of ggo is organised as follows:
+
+- project configuration include lists of included context, shadow repos, chat names, last used chat (fore resumption), ai model and other variables.
+- a project has included context given to Gemini (context-include/inc).
+- a project has shadow repositories acting as a time machine backup (git-add-repo/gr).
+- the ggo central repo is an git-lfs repo under `~/.ggo/<project name>`. This repo is not rolled back with time machine state, but does receive frequent commits, e.g. when included context state is updated and needs to be re-initialized. The reason this is done is that projects can be reloaded at a past point (e.g. at a point where something started to go wrong).
+    
 
 Projects contain:
-- a per project configuration file
-- a local `git-lfs` repo which holds:
-	- per project configuration
-	- all prompts, responses, and state given to the LLM as context
-	- commit transactions updated after every interaction
-- A project also has code directories as _shadow directories_ these directories
-	- if you make changes and if an AI makes changes to your directories a commit with a unique timestamp keeps the before and after state in a small commit
-- the numerous commits in the git lfs repo and the shadow directories are navigated by time stamps and the history can be searched, e.g. if in a prompt you say "this now works (or broke)" that prompt is time stamped, can be searched with ripgrep and the state exactly before and after is available to you to restore your working repos.   
-- ggo only affects your working repos for rollbacks, its entire project state is held under ~/.ggo and subdirectories.
-- It maintains GEMINI.md instructions so that your interaction is along the style you want
 
-The transaction engine is not 100% atomic but practically very safe and works as follows. We start with handling the "ai interaction transaction state" when a user starts an ai transaction. That transaction gets a timestamp (at the start first, because if it aborts, there often still is useful information or side effects).  At that point `ggo` creates a commit and tag in the shadow and lfs repos: this commit has the user's changes up to the transaction, the tag is the timestamp with the word "before".
+- a per project configuration file.
+- a local git-lfs repo which holds: per project configuration: its repos, context, chats, model, resumption state; all prompts, responses, and actual context state given to the LLM, timestamped; commit transactions updated after every interaction.
+- It maintains GEMINI.md instructions so that your interaction is along the style you want.
+    
 
-We also need second associated (system managed) "after transaction" timestamp which we catch when the transaction completes or aborts.  Here the state is committed again, using the same timestamp with the word "after".  The chat records can be added to the `sources` one single time but should have the before and after timestamp in them.
+For interactions between gemini chat, ChatGPT and the ggo generated chats various directories contain important state. All variables are held under `~/.ggo/`. Project directories contain no ggo configuration or state, hence ggo can be run from any location, load a project, or work (with some code changes) with remote shells. ggo has no concept of a working directory, but anchors pathnames in the calling users home directory to facilitate using it on other systems.
 
-We then update git lfs, and the shadow directories with independent git transactions and move them forward we use the "after timestamp everywhere as a tag. If no changes are made, we still introduce a tag on the shadow directories so that the state remains lock step.
+### 4.3 Detailed descriptions of the configuration data
 
-Not every transaction is fully defined yet, e.g. the ones associated with using editors, replacing files etc. 
+The state is summarised as follows: the global configuration has: api key file names (not keys), global ai directory locations. per project steate.
 
-The `gs` command can roll back and restore of working repos based on these tags.  If we restore to the before tag, we get the user's state back before the transaction was started, if we use the after tag, we get the users and AI's state back.  When we do this, we commit the working repo (for safety), and if it's easily possible also stash it, and again use the timestamp to find the past. I would associate a readable time tag and the state count number from the shadow directories associated with it also. If `gs` goes back to the head, then it can clean up its two commits and two tags.
+### 4.4 **Configuration & State Managing configuration**
 
-The data in the shadow repositories is simply updated with rsync.  This is a double belt and suspenders system that appears to have few gaps (your battery can run out). 
+- `config-set [project] [field:value]]` If project is omitted a global variable is set. To set the project name and its directory two arguments must be passed after the `:`.
+- `config-show [project]` - show global or project config variables.
+- `pl` - project list - list all projects and their suspected directories. If `field:value` is omitted, a default value is set. All configurations and pathnames are verified upon loading and upon writing with Viper.
+    
 
-**NOTE** we could roll back the ingest of state entirely, clear out put everything back, but remember, all chat prompts would also have to be sent back and forth. If the API backend does live with that, then we make the AI api nearly transactional as well. Going forward with gs is simply a matter of attaching the prompts again, going backward requires a "wipe". However, this decision is subtle. I think the real working experience is "Gemini we are build X but broke Y in step 5. I'm rolling back the code to 5, so we start fixing Y from there again - but we try to complete X as well". That speaks against rolling the chat state back in lock step.
+#### 4.4.1 **Global configuration (`~/.ggo/config.yaml`)** Specifies:
 
-#### 1.5.1 Configuration & State Managing configuration 
+- `api_key_path` - file with gemini API key
+- `github_account`
+- `source_dir`
+- `ingest_dir`
+- `chunks_dir`: # here AI created snippets are stored (we don't need this it's in the ai record)
+- `files_dir`: # here AI created files are stored (we don't need this, these are in the ai record)
+- `editor` # we don't need this I think
+- `quick-editor` # we don't need this
+- `projects` array, project-name: `<last dir seen at>`
+    
 
-- `config-set [project] [field:value]]`  
-	- If project is omitted a global variable is set
-	- To set the project name and its directory two arguments must be passed after the `:`
-- `config-show [project]` - show global or project config variables
-- `pl`  - project list - list all projects and their suspected directories
+#### 4.4.2 Project Configuration 
 
-If `field:value` is omitted, a default value is set. 
+(`.ggo/project.yaml`)** Configuration is local to the project directory, allowing graceful handling of remote execution and customized tooling per codebase. Directory structure:
 
-All configurations and pathnames are verified upon loading and upon writing with Viper.
-
-#### 1.5.2 Global configuration (`~/.ggo/config.yaml`)
-Specifies: 
-
-- api_key_path - file with gemini API key
-- github_account
-- source_dir 
-- ingest_dir
-- chunks_dir
-- editor
-- quick-editor
-- projects array, project-name: `<last dir seen at>`
-
-#### 1.5.3 Project Configuration (.ggo/project.yaml)
-
-Configuration is local to the project directory, allowing graceful handling of remote execution and customized tooling per codebase. 
-
-Directory structure: 
 ```
 ~/
 	.ggo/
+		config.yaml # global configuration, api key file, <sources> etc.
 		ggoai-<project-name>/  # the .ggo internal lfs repo
-			project.yaml
+			project.yaml # project configuration, model, context includes, repos, resumption data
 			GEMINI.md
-			chats/source/yyyy/mm/<ai-interaction files>
-			includes
+			chats/chatname.md
+			includes    # context includes
 		shadow-repos/   # include commands ingest, their .git is noted
 			path-repo1
 			path-repo2
 ```
-Shadow Repo: Each project gets a parallel shadow Git repo initialized via 
-```
-git --git-dir=.ggo/ai-shadow.git --work-tree=.
-``` 
-The global `ai-<project-name>` (cutoff 750K bytes) is an lfs directory.  Shadow directories are configured as the corresponding code directories.
-
-The user's actual `.git` repository remains completely untouched, except for stashing when the .ggo repo rolls back state.
-
-Gitignore: Uses a dual `.gitignore` strategy. It respects the project's standard `.gitignore` but can also use a custom `.ggo/.shadowignore` to track files locally for the AI that shouldn't go to the main repo.
-
-Simple pruning is available as a fast forward operation because the ai- directory could be large.  
-
-All repos under `.ggo` will have timestamps as tags with and a descriptive element can be added to the last tag.  It allows to load the entire chat and include history up to exactly a given moment.
-
-Each project has an array of chats.  New chats are started at new timestamps when a refresh is needed, e.g. a summary included file with project data summarises an enormous history of the project.  One chat is active, but one can go back to other chats.
 
 YAML
-- project_name: "ggo"
-- model_name:
-- shell_cmd: "bash" # Can be swapped to "ssh -t dev-vm 'bash'" for remote work
-- diff_cmd: "emacsclient -c --eval '(ediff-files \"{actual}\" \"{suggestion}\")'"
-- includes: `[dir1, dir2, ... , file1, .. file2]`
-- chat: `[chat1, chat2, ....]`
-- last_chat:  chat5
 
+YAML
 
-### 1.6 The Active Filewatcher
+```
+project_name: "ggo"
+model_name:
+shell_cmd: "bash" # Can be swapped to "ssh -t dev-vm 'bash'" for remote work
+diff_cmd: "emacsclient -c --eval '(ediff-files \"{actual}\" \"{suggestion}\")'"
+includes: [dir1, dir2, ... , file1, .. file2]
+chat: [chat1, chat2, ....]
+last_chat:  chat5
+last_timestamp: 
+gemini_remote_context_restore_token:
+```
 
-ggo runs a background fsnotify Goroutine watching any file you have included (inc) and .ggo/GEMINI.md.   Files in .gitignore are not watched.
+### 4.5 The Time Machine 
 
-If you manually edit and save a file in your editor, ggo instantly detects the filesystem event, computes the diff, and upon the next interaction appens an update to the Gemini session state.  Hence auto save doesn't trigger a stream of updates, because while editing the repl is usually quiet.  
+To provide safety ggo creates:
 
-Where users must take care is in running tests inside the repo can produce a lot of output and this should be put in the .gitignore. 
+- a central repo, a git lfs repo with context, configurations, chat history.
+- shadow repos to have time machine like backup restore of the working repos (not just the committed state, the working overlay as well).
+    
 
-As an example, if the user updated design.md with new content, the AI is always looking over your shoulder. So, the user can edit his repo/document files, the `~/.ggo/<ai-project>` shadow git is automatically staged, committed and tagged before the next API call.  Again, the source repo git is managed from the shell or IDE.
-### 1.7 The Terminal and Editor IPC Bridge
+The safety machine of ggo works as follows. A project has working repos. Ggo creates for each working repo a shadow repo these shadow repos act as a time machine for code changes (both commited and overlay working set changes, tags etc).
 
-To leave the REPL running in a terminal but still command it from an editor or shell, ggo spins up lightweight Unix Domain Sockets (e.g., /tmp/ggo.sock.{edit,term}) on boot or uses pty's.
+- if you make changes and if an AI makes changes to your directories a commit with a unique timestamp keeps the before and after state in a small commit.
+- ggo only affects your working repos for allowed AI updates and rollbacks.
+- the numerous commits in the git lfs repo and the shadow directories are navigated by time stamps and the history can be searched, e.g. if in a prompt you say "this now works (or broke)" that prompt is time stamped, can be searched with ripgrep and the state exactly before and after is available to you to restore your working repos.
+    
 
-The terminal remains attached to the repl session and its history is preserved under suspension into the repl and resumption of the shell.   Suspending the shell or editor triggers commands as described below.
+Shadow Repo: Each project gets a parallel shadow Git repo initialized via: `git --git-dir=.ggo/ai-shadow.git --work-tree=.` The global `ai-<project-name>` (cutoff 750K bytes) is an lfs directory. Shadow directories are configured as the corresponding code directories. The user's actual `.git` repository remains completely untouched, except for stashing when the `.ggo` repo rolls back state. (NOTE: it's not 100% clear what to do with stashes). Simple pruning is not yet available as a fast forward operation because the ai- directory could be large. Maybe later.
 
-Particular care must be taken with editors as their default actions depend on files being saved and updated and for convenience and multi-editor use auto-save may be activated.
+The ai step transaction engine is not 100% atomic but practically very safe and works as follows. We start a user's ai step by anchoring it with a timestamp. If something is about to change it snapshots all working repos with that timestamp and a `<time>-before-ai` (it also includes branch information and other data, like staged files). Then ggo may introduce a change and when this finishes (successfully or aborted) ggo creates an `<time>-after-ai` tag and commit in the shadow and lfs repos. Hence here are two tags related to each ai step:
 
-An Elisp function in Emacs bound to a hotkey pipes text to the socket: (shell-command `echo '/fix apply' | nc -U /tmp/ggo.sock`). ggo receives it, executes it, and prints the result in the terminal.
+- `transaction-start-before-ai`
+- `transaction-start-time-after-ai`
+    
 
-### 1.8 Repl Commands
+Chat records are small steps that are appended, but if included state is noticed to have changed a transaction capturing the state is again created, in the central repo. If no changes are made, we still introduce a tag on the shadow directories so that the state remains lock step. Not every transaction is fully defined yet, but in principle every ai step becomes a recorded ai record.
 
-#### 1.8.1 Default use
+The `git-restore`/`gs` command can roll back and restore of working repos based on these tags. If we restore to the before tag, we get the user's state back before the transaction was started, if we use the after tag, we get the users and AI's state back. When we do this, we commit the working repo (for safety), and if it's easily possible also stash it, and again use the timestamp to find the past. I would associate a readable time tag and the state count number from the shadow directories associated with it also. If gs goes back to the head, then it can clean up its two commits and two tags.
+
+NOTE we could roll back the ingest of state entirely, clear out put everything back, but remember, all chat prompts would also have to be sent back and forth. If the API backend does live with that, then we make the AI api nearly transactional as well. Going forward with gs is simply a matter of attaching the prompts again, going backward requires a "wipe". However, this decision is subtle. I think the real working experience is "Gemini we are building X but we broke Y in step 5. I'm rolling back the code to 5, so we start fixing Y from there again - but we try to complete X as well". That speaks against rolling the chat state back in lock step.
+
+## 5 The ggo repl Commands
+
+### 5.1 Default use
 
 Starting the repl in a directory loads the project configuration chats and gains access to the tag list. The current tag is set at the head by default, but can be changed as above.
 So the typical workflow is: 
 
-- In th shell `cd` to project dir, start ggo
-- `sc <chat>` starts default chat, or a new chat, using the current timestamp (see gs)
-- `ps` - sets the project to another one
-- `pl` - lists projects, warns if the directories cannot be found
-- with the git commands aboove the exact resumption point can be managed.
-- `cs` shortcut to start the last start
-#### 1.8.2 git and snapshot commands
+- Start ggo
+- Open the chat buffer
+- `write-files/wf`
+- work in terminal and editor as usual but be prepared for: 
+	- easy creation of paste board entries in shells (for pasting into prompts)
+	- having commands like: `start diff/patch session based on clipboard`
 
-- `gl <count>` git list tags with descriptions when available, without arg, all timestamps (human readable) and descs
-- `gs [tag|chat]` git set time tag or chat name (at final chat timestamp), without argument, the last one. Before executing the checkout, ggo snapshots the current working tree (edited, staged, unmodified) to prevent data loss, allowing immediate reversal.  Stashing of current state is automatic
-- `gh` return the working repos and `.ggo` repo to the head (normal situation)
-- `gd` git describe the tag currently set
-- `gc <count>` clear `<count>` tags from the current chat fast forward to last one, without arguments, fast forward to the last one.
-- `gp [push|pull]` push/pull the lfs repo to github (described above). Merging is strictly fast-forward based on timestamps. No 3-way merges. If histories diverge, it aborts and requires a forceful override (`--overwrite-local` or `--overwrite-remote`).
-- `gg <pattern>` searches through the history of the selected chat and finds the timestamp(s) when a result or error was detected.  Prints the timestamp good for selection, puts most recent one in the paste buffer.
+### 5.2 git and snapshot commands
 
-The included git files are managed by ggo entirely in the shadow repo.  ggo takes no git actions on the permanent project repos, this can be done from shell or IDE, except for stashing work in progress on an active branch.
+- `git-list/gl <count>` git list tags with descriptions when available, without arg, all timestamps (human readable) and descs
+- `git-restore/gs [tag|chat]` git set time tag or chat name (at final chat timestamp), without argument, the last one. Before executing the checkout, ggo snapshots the current working tree (edited, staged, unmodified) to prevent data loss, allowing immediate reversal.  Stashing of current state is automatic
+- `git-describe/gd` git describe the tag currently set
+- `git-fastforward/gc <count>` clear `<count>` tags from the current chat fast forward to last one, without arguments, fast forward to the last one. (LATER)
+- `git-remote/gr [push|pull]` push/pull the lfs repo and shadow repos of the project to their upstream (described above).  The system is conflict free. 
+- `git-grep/gg <pattern>` searches through the history of the selected ai records and finds the timestamp(s) when a result or error was detected.  Prints the timestamp good for selection, puts most recent one in the paste buffer.
 
-#### 1.8.3 Session and Context Management
 
-- `cs <chat-name>`: Start Chat. Sets the active project, chatname and timestamp for the chat, name and initializes the in-memory context window including as of the right timestamp. Without an argument it restarts the chat at the last-chat.  It ingests includes, and starts watching included directories and files
-- `ce`: End Chat. Clears the active chat session, memory, and context window for a chat.
-- `cv`: Execute the viewer (e.g. `less` or and editor) on the chat history, which can also be seen by scrolling up/down in the terminal window.  The viewer provides much needed searching.
-- `cr`: copy last response into the paste buffer as pure text
-- `cw <path>`:  write last response to file. 
-#### 1.8.4 Ingesting
+#### 5.2.1 Ingesting
 
-- `inc <path1> <path2>...`: Include. Adds a file or directory subtree to the persistent `.ggo/project.yaml` included list. Automatically ingested into the context.  There are other ingestion commands associated with prompting and associated with file watching.
+- `context-include` / `inc <path1> <path2>...`: Include. Adds a file or directory subtree to the persistent `.ggo/project.yaml` included list. Automatically ingested into the context *as read-only data*. Global documents (like Obsidian Vaults) are safely ingested without being swept into the Time Machine.
+- `git-add-repo` / `gr <path>`: Explicitly enrolls a specific Git repository into the `Project.CodeDirs` state matrix, bringing it under the safety umbrella of the Time Machine.
 
-#### 1.8.5 Prompting & Ingestion
 
-- `p`: Prompt. Toggles to multi-line prompting input buffer, ideally with the emacs bindings inside (go to previous line, end of line etc). Ctrl-D sends the prompt to Gemini.open lines can be added with return to separate parts of a reply
-	- shift select works (if possible) for quick copying, and 
-	- emacs kill/yank commands copy to the system paste buffer
-	- to stop the prompt response sequence type ctrl-D then you are back at the ggo command level. 
-- `pinc <paths...>`: Include + Prompt.  
-	- Adds files to the context, 
-	- opens the multi-line buffer, 
-	- Ctrl-D sends prompt followed by the included file. 
-- `ps`: Prompt + Selection (Clipboard). 
-	- Reads the OS clipboard, 
-	- opens a readline editing area for a prepended prompt. 
-	- Ctrl-D sends `[Prompt] + [Clipboard]`.
-- `pm`: prompt and make a selection in the paste buffer: e.g. 
-	- find the tag in this project from last night 8pm.
-	- now give me the shell command.  
-	- If the prompt asks for multiple make constructions of snippets, they are each separately copied into the paste buffer from beginning to end.  So e.g. pm "Give me the 5 source files we discussed now" gives me 5 fields in the paste buffer history with the file contents.
-	- does not automatically switch to shell
-- `pps`: like pm but  
-	- Prompt with key part of the response in pastebuffer
-	+ Starts shell
-	+ User pastes one or more of the pastebuffers and can execute in the shell
+## 6 Detailed design notes
 
-#### 1.8.6 The Persistent Shell Engine
+### 6.1 The gsync Primitive: Universal State Transfer
 
-- `cd <dir>` without argument go to project root. Print the directory like a bash prompt `ggo-dir >`.  The project dir remain unaffected.
-- `sh`: Drop to Shell. Attaches the user to a persistent background shell PTY. Maintains Ctrl-P history and directory (cd) state work. 
-- `Ctrl-D` detaches back to the repl ggo and records the output buffer.  It also saves the shell history up to that point in the `.ggo/<project>` directory.
-- `ss`: Send Shell. Sends the last ShellOutput buffer directly to Gemini
-- `pss`: Prompt + Send Shell. 
-	- Opens readline command for a prepended prompt. 
-	- Ctrl-D sends `[Prompt] + [lastShellOutput]`.
-- se: Edit Shell. 
-	- Opens lastShellOutput in the user's $EDITOR (e.g., vi, Emacs). 
-	- Upon saving and exiting, automatically sends the pruned/annotated log to Gemini.
+#### 6.1.1 Concept: The Unified State Machine
 
-#### 1.8.7 Surgical File Editing
-
-- `ef [file1 file2 ]` : Edit File. 
-	- Instructs Gemini to rewrite based on the prompt/context. 
-	- Without an argument, it triggers edits for all files affected by the last prompt. 
-	- ggo intercepts the output, saves it to temp files under the project .ggo, 
-	- triggers diff_cmd (e.g., ediff-files) for manual review.
-- `efs <file>`: Edit File Selection. 
-	- Targets the paste buffer selection within a file for localized AI edits. 
-	- Triggers diff_cmd.  
-	- If file is omitted runs ripgrep to locate the file in the repos
-	- If the paste buffer contents is not found, or in more than one location it throws an error.
-- `vf, vfs` - like ef, efs, but uses the secondary editor (for simple edits, many people prefer vi perhaps)
-
-## 2 Detailed design notes
-
-### 2.1 The `gsync` Primitive: Universal State Transfer
-
-**Concept: The Unified State Machine**
-
-To guarantee absolute safety, zero data loss, and perfect chronological alignment, `ggo` uses a single, bidirectional primitive called `gsync`. It decomposes the user's repository environment into a **Foundation** and an **Overlay**, transferring them between the Working Repo and a localized Shadow Vault.
+To guarantee absolute safety, zero data loss, and perfect chronological alignment, ggo uses a single, bidirectional primitive called gsync. It decomposes the user's repository environment into a Foundation and an Overlay, transferring them between the Working Repo and a localized Shadow Vault.
 
 The complete state consists of:
 
-1. **Git Hash** (The exact point in history)
-2. **Branch** (The symbolic reference the user was on)
-3. **Tags** (Standard human-authored release tags)
-4. **Overlay** (The uncommitted physical files on the desk)
+- Git Hash (The exact point in history)
+- Branch (The symbolic reference the user was on)
+- Tags (Standard human-authored release tags)
+- Overlay (The uncommitted physical files on the desk)
+- Staged files (Captured safely via binary patch injection)
+- Untracked files (not in .gitignore)
+- Stashed files (Fully preserved via `refs/stash` mirroring)
     
 
 In the Shadow Repos, we store a perfect mirror of the Working Repos, but they also accumulate extra overlay commits representing the AI's temporal states. It is critical that these AI-generated commits never bleed back into the Working Repo's history.
 
-**The Git Namespace Secret (`refs/ggo/`)**
+#### 6.1.2 The Git Namespace Secret (refs/ggo/)
 
-To prevent AI tags and overlay commits from polluting the user's Working Repo, `ggo` completely bypasses standard Git tagging. Instead, it writes transaction anchors directly into a custom, hidden namespace: `refs/ggo/txn/`. Because standard Git commands (`clone`, `fetch`, `push`) are hardcoded to only look at `refs/heads/` (branches) and `refs/tags/` (human tags), the AI's temporal history remains entirely invisible and perfectly isolated within the Shadow Vault.
+To prevent AI tags and overlay commits from polluting the user's Working Repo, ggo completely bypasses standard Git tagging. Instead, it writes transaction anchors directly into a custom, hidden namespace: `refs/ggo/txn/`. Because standard Git commands (clone, fetch, push) are hardcoded to only look at `refs/heads/` (branches) and `refs/tags/` (human tags), the AI's temporal history remains entirely invisible and perfectly isolated within the Shadow Vault.
 
-**The Anchor Time**
+#### 6.1.3 The Anchor Time
 
-Every AI transaction is bound to a single **Anchor Time** (`YYYYMMDDTHHMMSSZ`) generated at the exact moment the prompt is submitted. This serves as the immutable Transaction ID. Because AI transactions and Git syncs are not atomic (e.g., the system could crash or lose power mid-generation), we capture three distinct anchors per transaction for crash-recovery:
+Every AI transaction is bound to a single Anchor Time (`YYYYMMDDTHHMMSSZ`) generated at the exact moment the prompt is submitted. This serves as the immutable Transaction ID. Because AI transactions and Git syncs are not atomic (e.g., the system could crash or lose power mid-generation), we capture three distinct anchors per transaction for crash-recovery:
 
-1. `<Anchor>-start`: Created instantly to lock the transaction.
-2. `<Anchor>-before`: Created after successfully capturing the user's pre-prompt desk.
-3. `<Anchor>-after`: Created after successfully capturing the AI's response.
+- `<Anchor>-start`: Created instantly to lock the transaction.
+- `<Anchor>-before`: Created after successfully capturing the user's pre-prompt desk.
+- `<Anchor>-after`: Created after successfully capturing the AI's response.
+    
+#### 6.1.4 Direction 1: Capture (Working → Shadow)
+
+Used to securely vault the user's state and record AI modifications.
+
+1. **Mirror the Database**: ggo runs a raw git fetch from the Shadow Repo, pulling all branches, commits, stashes (`refs/stash`), and human tags from the Working Repo. This acts as a continuous disaster-recovery backup.
+2. **Isolate the Foundation**: ggo reads the Working Repo's current Commit Hash and Branch, then checks out that exact hash inside the Shadow Repo (entering Detached HEAD to protect the mirrored branches).
+3. **Extract the Index**: ggo runs a binary diff (`.ggo_staged.patch`) to safely record what files the user had explicitly staged.
+4. **Capture the Overlay**: ggo executes a destructive rsync from the Working directory to the Shadow directory, perfectly capturing the uncommitted desk, and then cleans up the temporary patch file.
+5. **Seal the Record**: The Shadow Repo commits the overlay—storing the Foundation metadata in the message. Instead of a normal tag, ggo runs `git update-ref refs/ggo/txn/<Anchor>-before <commit-hash>`, hiding this state safely in the custom namespace.
     
 
+#### 6.1.5 Direction 2: Restore (Shadow → Working)
 
-**Mode 1: Capture (Working → Shadow)**
+Used by the Time Machine to perfectly recreate past states without destroying human progress, and for complete Disaster Recovery. NOTE: The precise restoration mechanism requires preserving the working tree without relying on destructive resets (`git checkout -f` vs index state bugs), relying heavily on staging patches and clean overlay generation.
 
-_Used to securely vault the user's state and record AI modifications._
-
-1. **Mirror the Database:** `ggo` runs a raw `git fetch` from the Shadow Repo, pulling all branches, commits, and human tags from the Working Repo. This acts as a continuous disaster-recovery backup.
-2. **Isolate the Foundation:** `ggo` reads the Working Repo's current Commit Hash and Branch, then checks out that exact hash inside the Shadow Repo (entering Detached HEAD to protect the mirrored branches).
-3. **Capture the Overlay:** `ggo` executes a destructive `rsync` from the Working directory to the Shadow directory, perfectly capturing the uncommitted desk.
-4. **Seal the Record:** The Shadow Repo commits the overlay—storing the Foundation metadata in the message. Instead of a normal tag, `ggo` runs `git update-ref refs/ggo/txn/<Anchor>-before <commit-hash>`, hiding this state safely in the custom namespace.
+1. **Read the Record**: ggo queries the `refs/ggo/txn/` namespace in the Shadow Repo to locate the requested historical Foundation (Commit Hash) and Branch.
     
-**Mode 2: Restore (Shadow → Working)**
-
-_Used by the Time Machine to perfectly recreate past states without destroying human progress, and for complete Disaster Recovery._
-
-1. **Read the Record:** `ggo` queries the `refs/ggo/txn/` namespace in the Shadow Repo to locate the requested historical Foundation (Commit Hash) and Branch.
-2. **Protect the Future:** `ggo` checks out that exact Commit Hash in the Working Repo (entering Detached HEAD). This guarantees that any new branches or recent human commits are left safely untouched in the future.
-3. **Restore the Overlay:** `ggo` executes a targeted `rsync` from the Shadow directory back onto the Working desk. The user is instantly transported to the exact, mathematically perfect state of the past.
-4. **Disaster Recovery (Total Restoration):** If a rogue AI command (or human error) deletes the entire Working Repo, the user simply runs a standard `git clone` from the Shadow Vault. Because Git ignores the `refs/ggo/` namespace by default, the clone perfectly restores the human history, branches, and tags, while automatically leaving all the AI's overlay commits behind in the vault.
-
-
-## 3 Future ideas
-
-### 3.1 Extract to a web page
-
-From `ggo extract <infile> <outfile>` I want to create a multimedia web page with images, attachments etc simply by typing `ggo web <outfile>`
-
-This is a phenomenal idea. It bridges the gap between the "raw text knowledge" we've been wrangling and the "multimodal reality" of modern AI.
-
-To answer your question directly: **It is surprisingly easy to build, and we could probably do it in an hour.**
-
-Here is exactly why it’s easy, how the architecture would work, and the clever shortcut we can take to avoid the "PDF Nightmare."
-
-#### 3.1.1 The Architecture of `ggo extract-web`
-
-**1. The Asset Extraction**
-
-When ChatGPT or Gemini gives you an export, the attachments (images, uploaded PDFs, generated CSVs) are usually sitting in a subfolder right next to the `conversations.json` file (e.g., a `file_uploads` or `generated_data` folder).
-
-Our parser just needs to look for the attachment IDs/paths in the JSON, copy those physical files into your `~/ai/chats/source/attachments/<chat-id>/` directory, and rewrite the Markdown links in the output to point to these new local paths.
-
-**2. The Markdown-to-HTML Engine**
-
-Go has an incredibly fast, standard-compliant Markdown parser called `goldmark`. We just feed it our extracted Markdown, and it instantly spits out HTML. We can inject a tiny block of CSS at the top so it renders like a beautiful, clean, readable report (nice typography, nicely sized images, code blocks with gray backgrounds).
-
-**3. The Local Server & Browser Popup**
-
-Go's standard library can spin up a web server in literally three lines of code:
-
-Go
-
-```
-http.Handle("/", http.FileServer(http.Dir(outputDir)))
-http.ListenAndServe(":8080", nil)
-```
-
-We combine that with a Go library that executes a cross-platform "open browser" command.
-
-When you type `ggo extract-web <infile>`, it parses the files, spins up `localhost:8080`, and magically opens a new tab in your Chrome/Safari showing your beautifully rendered building report.
-
-#### 3.1.2 The "Print to PDF" Shortcut
-
-You mentioned producing a PDF. Generating PDFs directly in code (calculating page breaks, fonts, image scaling) is notoriously difficult and requires massive, bloated libraries.
-
-However, by serving it as a beautiful HTML web page, we get PDF generation for free! You just hit **Cmd+P (Print)** in your browser, select "Save as PDF", and the browser's world-class rendering engine does all the hard work for you. You can instantly email that to your architect.
-
-
-
-## 4 v1.1 remaining implementation
-
-### 4.1 The Core Philosophy
-
-`ggo` is a headless, Git-aware Unix orchestrator for LLMs. It does not reinvent text editing or LSP integrations. It uses standard file streams to integrate with any editor, enforces structured output to safely apply codebase mutations via diff tools, and wraps every interaction in a deterministic Git Time Machine.
-
-### 4.2 The 6 Pillars of `ggo` v1.1
-
-1. **Editor-Native Continuous Chat:** The chat UI is just your `$EDITOR` opening `active_chat.md`. `ggo` watches this file. When you save (`C-x C-s`), `ggo` reads your prompt, fires it to Gemini, and streams the AI's response directly back into the bottom of the file. `Ctrl-C` in the terminal interrupts the stream. Typing `/exit` in the buffer drops you safely back to the `ggo>` REPL.
+2. **Protect the Future**: ggo checks out that exact Commit Hash in the Working Repo (entering Detached HEAD). This guarantees that any new branches or recent human commits are left safely untouched in the future.
     
-2. **Deterministic Structured Output:** We enforce a strict `Gemini.md` system prompt. If the AI proposes file changes, it MUST wrap them in strict `<file path="..."></file>` XML tags (XML is far less prone to hallucination than escaped JSON). `ggo` intercepts these tags silently before they hit your chat buffer.
+3. **Restore the Overlay**: ggo executes a targeted rsync from the Shadow directory back onto the Working desk.
     
-3. **Pristine Context Synchronization:** Before a prompt is sent, `ggo` ensures the AI sees the exact, pristine state of the file. The file watcher/Git diff engine guarantees the context sent to the API matches your working directory exactly, preventing broken diffs.
-    
-4. **Unix Orchestration (Hooks, Not Plugins):** `ggo` exposes simple pipes/sockets. A 3-line Emacs Lisp hook or Bash alias is all it takes to send a selection or a compile error into the `ggo` context buffer.
-    
-5. **Strict Separation of AI Concerns:** `ggo` handles "Batch and Pipe" (sweeping refactors, generating new architectures, Time Travel). The user's existing LSP/native Gemini editor plugins handle the "Micro" (auto-completing a variable name or inline syntax).
-    
-6. **State Portability (Github Sync):** The central vault (`~/.ggo/ggoai-<project>/`) acts as a standard Git repository tracking both configuration and shadow repos. `ggo push`, `ggo pull`, and `ggo sync` will wrap standard Git remote commands to push your entire Time Machine history and chat logs to a private Github repo, making your AI state instantly portable across your Mac, Linux, and Cloud environments.
+4. **Reconstruct the Index**: ggo safely applies the `.ggo_staged.patch` if it exists, ensuring the user's staging area is mathematically restored. The user is instantly transported to the exact, mathematically perfect state of the past.
     
 
----
+#### 6.1.6 Disaster Recovery (Total Restoration)
 
-### 4.3 The 3 Core Workflows
+If a rogue AI command (or human error) deletes the entire Working Repo, the user simply runs `gs <tag>`. ggo detects the missing directory and executes a standard `git clone` from the Shadow Vault to restore the foundation before applying the requested overlay. Because Git ignores the `refs/ggo/` namespace by default, the clone perfectly restores the human history, branches, and tags, while automatically leaving all the AI's overlay commits behind in the vault.
 
-**Workflow 1: The Iterative Chat & Micro-Edit**
+### 6.2 Automatic Context Updates
 
-- **Action:** You run `p` in `ggo`. Emacs opens `active_chat.md`. You chat back and forth with the LLM about architecture.
-    
-- **Result:** The LLM streams Markdown explanations directly into the buffer.
-    
-- **Resolution:** When you reach a conclusion, you type: _"Write the changes to disk."_ `ggo` intercepts the resulting `<file>` tags and spawns `ediff` for you to review and accept the changes.
-    
+**Concept: The Just-In-Time Diff** To keep the LLM context razor-sharp and avoid token bloat, `ggo` does not resend entire files every time you type a prompt. Instead, it only sends what you have changed in your explicitly included files (`inc`), calculated precisely at the moment you hit Enter.
 
-**Workflow 2: The Batch Generator**
+**How it Works:**
 
-- **Action:** You prompt `ggo` to generate 3 new files based on a design pattern.
+1. **The Baseline:** When you explicitly include a file or directory (`inc src/main.go`), `ggo` copies it into the central `~/.ggo/ggoai-<project>/includes/` directory and commits it to the central Git-LFS repository. This establishes the AI's baseline knowledge.
     
-- **Result:** The LLM streams back the XML payload. `ggo` parses it, writes the files to `/tmp/ggo-staging/`, and instantly halts.
+2. **The Just-In-Time Check:** When you submit a new prompt, `ggo` instantly compares the live, physical files on your desk against their baseline copies in the central repo.
     
-- **Resolution:** `ggo` prompts you: `[ggo] Gemini proposes 3 new files. Apply/Diff/Reject?`
+3. **The Delta Injection:** If you modified an included file in your editor, `ggo` generates a clean `git diff` of just those changes. This diff is automatically injected into the prompt schema under `### Context`.
+    
+4. **The New Baseline:** After the prompt is dispatched, `ggo` silently syncs the central repo with your new file states, advancing the baseline.
     
 
-**Workflow 3: The Error Feedback Loop**
+This mechanism mathematically guarantees the AI always knows exactly what you just typed in your editor, without running heavy background daemons, without relying on IDE plugins, and without bloating the API request with unmodified code.
 
-- **Action:** You compile the code, and it fails.
-    
-- **Result:** You pipe the failure directly into `ggo`: `go build 2>&1 | ggo --prompt "Fix these compilation errors"`.
-    
-- **Resolution:** `ggo` runs Workflow 2 autonomously, parsing the error, fetching the pristine file context, generating the fix payload, and spawning `ediff` for your approval.
-    
 
----
+### 6.3 Chats
 
-### 4.4 Implementation Roadmap (The Next 48 Hours)
+Git's chat pipes
+- `~/.ggo/<project>/chats/<chat name>/{data-pipe, control-pipe}`
+These pipes are always ready for use with an editor when this chat has been selected.  Responsibilities:
+- ggo will 
+	- sanitize LLM output and create ai records
+	- add data like timestamps, project and chat names to the markdown
+	- if a response with snippets arrives ggo places them into the paste buffers
+	- if a respone with new files arrives `files-write/fw` will write the files to the working dirs (bracketed by a transaction)
+	- allow a simple terminal chat with the `chat/p` command, `ctrl-d` to send, `ctrl-c` to abort. 
+- the editor is responsible sending the next prompt text (search back ward to "end-response" and send a region)
+- the editor is reponsible for sending control commands
+	- send
+	- abort
+	- ANY others?
 
-**Phase 1: The Editor-as-UI Loop (Tonight / Tomorrow Morning)**
 
-- [ ] Wire up `p` to scaffold `~/.ggo/ggoai-<project>/chats/active_chat.md`.
-    
-- [ ] Spawn `$EDITOR` and start a background Go routine utilizing `fsnotify` to watch the file for Saves (`C-x C-s`).
-    
-- [ ] Implement the streaming response writer so Gemini's output appends to the file in real-time.
-    
-- [ ] Implement the `Ctrl-C` interrupt trap for the API stream.
-    
+## 7 Future ideas
 
-**Phase 2: The LLM Brain & Structured Output (Tomorrow Midday)**
+### 7.1 Extract to a Web Page (`ggo web`)
 
-- [ ] Write the immutable `Gemini.md` system prompt enforcing the `<file>` XML schema.
-    
-- [ ] Wire up the actual Gemini API call inside `SendPrompt` (currently stubbed).
-    
-- [ ] Build the Stream Interceptor: regex/parse the incoming stream so `<file>` blocks are stripped from the markdown output and written to `/tmp/ggo-staging/`.
-    
+Running `ggo web <outfile>` will locally host a fully rendered multimedia web page of your extracted chats.
 
-**Phase 3: The Diff Engine & Portability (Tomorrow Evening / Day 2)**
-
-- [ ] Implement the `diff_cmd` execution. When staging files exist, invoke the user's diff tool (e.g., `emacsclient -c --eval '(ediff-files ...)'`).
-    
-- [ ] Fix the minor readline path completion bug for `inc`.
-    
-- [ ] Implement `ggo remote add`, `ggo push`, and `ggo pull` to sync the `~/.ggo` vault.
-    
-
-Chat sessions: Add the correct formatting (XML is fine, but the sources need to have our markdown schema for the foreseeable future). Writing the ai records (let's stop using the word ai interaction - too long). Let's shamelessly do this with emacs - the key point in my view is to get a set of killer keyboard shortcuts to dispatch the prompt, interrupt the LLM, quite (/exit is far too much) - but the 3 tiny elisp macros should just insert a region or special control command in the pipe (so for vscode or vim the technique would be almost identical).
-
-But before we start how do we seamlessly run an emacs buffer in e.g. iterm2 and pipe to ggo? I think ggo opens the piped editor, backgrounds itself and keeps working, correct? The same for iterm itself. BTW, iterm would be re-opened similarly (background ggo connect a pipe) with "sh" or "s" needs a "mark command", perhaps just "m" for me So m \ test steps typed or pasted \ ctrl - <something> (kicks back into ggo, keeps terminal history etc). The mark is the point _from_ where iterms output becomes a "blob" for ggo. The last thing we want is anything (like ggo readline) sitting between the user and the shell and editor terminals: they keep all keyboard, mouse, selection, paste buffer actions they normally have.
-
-We create a chat with a name in a project, cc chat-create <name> (that is sensible). p resumes the current chat. Upon opening a project ggo does ingest the chat.md file with other ingest. The chat-<chatname>.md goes straight into the central repo, nothing in /tmp. Control pipe is fine, with 2-3 commands. So, to keep it simple: ggo starts up with named pipes or sockets _ready_ to consume, /.../ggo/editor.pipe,editor-control.pipe/diff.pipe. The ai records are written real time into sources by ggo (if we have bugs in the beginning we learn how to process a chat.md file and throw it in sources with the batch ingester)
-
-  
-
-As for the shell, often I need a couple of shells. (iterm tabs) - people have different shells, but can't something like "tee" arrange both the normal shell and a pipe to ggo, again, ggo can have e.g. 10 named pipes for up to 10 shells. s / s 1 / s 2. ggo listens to everything, because I think dispatch to ggo is controlled.
+- **Asset Extraction:** Attachments (images, PDFs, CSVs) from the raw export will be copied into the `~/ai/chats/source/attachments/<chat-id>/` directory, and markdown links will be automatically rewritten to point to them.
+- **HTML Rendering & Serving:** Go's `goldmark` parser will convert the markdown to styled HTML. A lightweight local server (`localhost:8080`) will spin up and automatically open the report in your default browser.
+- **The "Print to PDF" Shortcut:** Instead of fighting with complex PDF generation libraries in Go, this approach offers an excellent shortcut: simply hit **Cmd+P** in your browser and select "Save as PDF" to generate a perfectly formatted, shareable document.

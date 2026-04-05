@@ -31,7 +31,7 @@ var rootCmd = &cobra.Command{
 			response = strings.TrimSpace(strings.ToLower(response))
 
 			if response == "" || response == "y" || response == "yes" {
-				
+
 				fmt.Printf("Project name [\033[36m%s\033[0m]: ", defaultName)
 				nameResp, _ := reader.ReadString('\n')
 				nameResp = strings.TrimSpace(nameResp)

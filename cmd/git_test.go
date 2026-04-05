@@ -30,7 +30,7 @@ func TestGitsyncThorough(t *testing.T) {
 	subOriginDir := filepath.Join(tempDir, "submodule-origin")
 	workDir := filepath.Join(tempDir, "working")
 	shadowDir := filepath.Join(tempDir, "shadow")
-	
+
 	os.MkdirAll(subOriginDir, 0755)
 	os.MkdirAll(workDir, 0755)
 
@@ -57,7 +57,7 @@ func TestGitsyncThorough(t *testing.T) {
 	runGit(t, workDir, "commit", "-m", "Added submodule")
 
 	// 4. Create Complex Desk State (Stash, Partial Stage, Untracked)
-	
+
 	// A. Create a Stash
 	os.WriteFile(filepath.Join(workDir, "stash-target.txt"), []byte("baseline\nstashed-work\n"), 0644)
 	runGit(t, workDir, "stash", "push", "-m", "test-stash")
@@ -67,7 +67,7 @@ func TestGitsyncThorough(t *testing.T) {
 
 	// C. Create a Partial Stage
 	os.WriteFile(filepath.Join(workDir, "tracked.txt"), []byte("v1\npartially-staged-line\n"), 0644)
-	runGit(t, workDir, "add", "tracked.txt") // Stage it
+	runGit(t, workDir, "add", "tracked.txt")                                                                        // Stage it
 	os.WriteFile(filepath.Join(workDir, "tracked.txt"), []byte("v1\npartially-staged-line\nunstaged-line\n"), 0644) // Modify again
 
 	// 5. Capture Phase (Working -> Shadow)
@@ -121,7 +121,7 @@ func TestGitsyncThorough(t *testing.T) {
 	}
 
 	// 9. Verify Perfect Mathematical Restoration
-	
+
 	// A. Detached HEAD
 	branch := runGit(t, workDir, "branch", "--show-current")
 	if branch != "" {

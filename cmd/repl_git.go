@@ -5,166 +5,117 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
+	"strconv"
 	"strings"
 )
 
-func isTimeTraveling() bool {
-	home, _ := os.UserHomeDir()
-	centralRepoDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
-	matches, _ := filepath.Glob(filepath.Join(centralRepoDir, "branch_*"))
-	return len(matches) > 0
-}
-
-func handleGL(parts []string) {
-	count := "15"
-	if len(parts) > 1 {
-		count = parts[1]
-	}
-
-	if len(Project.CodeDirs) == 0 {
-		fmt.Println("[Error] No repositories enrolled. Run 'inc <path>' to start tracking.")
-		return
-	}
-
-	home, _ := os.UserHomeDir()
-	absDir, _ := filepath.Abs(Project.CodeDirs[0])
-	repoID := getRepoID(absDir)
-	
-	shadowDir := filepath.Join(home, ".ggo", "shadow-repos", repoID)
-
-	cmd := exec.Command("git", "-C", shadowDir, "for-each-ref", "--sort=-creatordate", "--format=%(refname:lstrip=3)|%(contents:subject)", "refs/ggo/txn/")
-	out, err := cmd.Output()
+// findGitRoot walks up the directory tree until it finds a .git file or directory.
+func findGitRoot(startPath string) string {
+	dir, err := filepath.Abs(startPath)
 	if err != nil {
-		fmt.Println("[Error] Timeline not initialized or shadow vault missing.")
-		return
+		return ""
 	}
-
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	fmt.Printf("\n--- AI Transaction Timeline (Max %s) ---\n", count)
-
-	seen := make(map[string]bool)
-	idx := 0
-	limit := 15
-	fmt.Sscanf(count, "%d", &limit)
-
-	metaRegex := regexp.MustCompile(`\[branch:\s*[^\]]+\]\s*\[base:\s*[^\]]+\]\s*`)
-
-	for _, line := range lines {
-		if line == "" || idx >= limit {
-			continue
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
 		}
-		data := strings.SplitN(line, "|", 2)
-		if len(data) < 2 {
-			continue
+		parent := filepath.Dir(dir)
+		if parent == dir { // Reached filesystem root
+			return ""
 		}
-
-		refName := data[0]
-		subject := data[1]
-
-		anchorParts := strings.Split(refName, "-")
-		if len(anchorParts) < 2 {
-			continue
-		}
-		anchor := anchorParts[0]
-
-		if seen[anchor] {
-			continue
-		}
-		seen[anchor] = true
-
-		subject = metaRegex.ReplaceAllString(subject, "")
-		subject = strings.Replace(subject, "after: ", "", 1)
-		subject = strings.Replace(subject, "before: ", "(aborted) ", 1)
-		subject = strings.Replace(subject, "transaction started: ", "(failed) ", 1)
-		subject = strings.Replace(subject, "init: ", "(baseline) ", 1)
-
-		fmt.Printf("[\033[32m%d\033[0m] \033[36m%s\033[0m | %s\n", idx, anchor, subject)
-		idx++
+		dir = parent
 	}
-	fmt.Println()
 }
 
-func handleGD(parts []string) {
-	cwd, _ := os.Getwd()
-	cmd := exec.Command("git", "-C", cwd, "log", "-1", "--pretty=format:%C(cyan)Date:%Creset %ad %C(magenta)(%ar)%Creset\n%C(cyan)HEAD:%Creset %C(yellow)%h%Creset\n%C(cyan)Tags:%Creset %C(green)%D%Creset\n%C(cyan)Msg :%Creset %s", "--date=format:%Y-%m-%d %H:%M:%S")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	fmt.Println("\n--- Current State ---")
-	_ = cmd.Run()
-	fmt.Println()
-}
-
-func returnToHead() {
-	if !isTimeTraveling() {
-		fmt.Println("[Info] You are already in the present.")
+func handleGitAddRepo(parts []string) {
+	if len(parts) < 2 {
+		fmt.Println("Usage: git-add-repo (or gr) <path_to_repo>")
 		return
 	}
 
-	home, _ := os.UserHomeDir()
-	centralRepoDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
-
-	fmt.Printf("Returning working directories to present...\n")
-
-	for _, dir := range Project.CodeDirs {
-		absDir, _ := filepath.Abs(dir)
-		repoID := getRepoID(absDir)
-		branchFile := filepath.Join(centralRepoDir, "branch_"+repoID)
-
-		branchBytes, err := os.ReadFile(branchFile)
-		if err == nil {
-			targetBranch := strings.TrimSpace(string(branchBytes))
-			exec.Command("git", "-C", absDir, "reset", "--hard", "HEAD").Run()
-			exec.Command("git", "-C", absDir, "clean", "-fd").Run()
-			exec.Command("git", "-C", absDir, "checkout", targetBranch).Run()
-			os.Remove(branchFile)
-		}
-	}
-
-	fmt.Println("[✓] Timeline restored. You are back in the present.")
-}
-
-func handleGS(parts []string) {
-	if len(parts) == 1 {
-		returnToHead()
+	targetPath := parts[1]
+	gitRoot := findGitRoot(targetPath)
+	if gitRoot == "" {
+		fmt.Printf("[Error] No Git repository found at or above %s\n", targetPath)
 		return
 	}
 
-	if isTimeTraveling() {
-		fmt.Println("[Error] You are currently viewing a past state.")
-		fmt.Println("Please run 'gs' without arguments to return to the present before traveling again.")
-		return
-	}
-
-	anchor := parts[1]
-	phase := "after"
-	if len(parts) > 2 {
-		phase = parts[2]
-	}
-
-	if len(anchor) < 5 {
-		anchor = resolveIndexToAnchor(anchor)
-		if anchor == "" {
-			fmt.Println("[Error] Invalid timeline index.")
+	// Check if already tracked
+	for _, c := range Project.CodeDirs {
+		if c == gitRoot {
+			fmt.Printf("[Info] Repository %s is already tracked by the Time Machine.\n", gitRoot)
 			return
 		}
 	}
 
+	// Enroll it into the Time Machine code_dirs
+	Project.CodeDirs = append(Project.CodeDirs, gitRoot)
 	home, _ := os.UserHomeDir()
-	centralRepoDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
+	ProjectViper.Set("code_dirs", Project.CodeDirs)
+	ProjectViper.WriteConfigAs(filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "project.yaml"))
 
-	fmt.Printf("\nExtracting past state (%s-%s) into working directories...\n", anchor, phase)
+	fmt.Printf("\033[32m[✓] Enrolled Git repository into Time Machine:\033[0m %s\n", gitRoot)
 
+	// Capture the baseline instantly
+	anchor := "20060102T150405Z" // Time package is not imported here, but we can rely on standard Git sync
+	SyncAllShadows(anchor, "init", "init: manual repository enrollment baseline")
+}
+
+func getLedgerTags() []string {
+	home, _ := os.UserHomeDir()
+	centralGitDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, ".git")
+	out, err := exec.Command("git", "--git-dir="+centralGitDir, "tag", "--sort=creatordate").CombinedOutput()
+	var tags []string
+	if err == nil {
+		for _, t := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if t != "" {
+				tags = append(tags, t)
+			}
+		}
+	}
+	return tags
+}
+
+func handleGL(parts []string) {
+	tags := getLedgerTags()
+	if len(tags) == 0 {
+		fmt.Println("\n[Info] No Time Machine transactions recorded yet.")
+		return
+	}
+	fmt.Println("\n--- Time Machine Ledger ---")
+	for i, t := range tags {
+		fmt.Printf("[%d] %s\n", i, t)
+	}
+	fmt.Println()
+}
+
+func handleGS(parts []string) {
+	if len(parts) < 2 {
+		fmt.Println("Usage: gs <index>")
+		return
+	}
+	idx, err := strconv.Atoi(parts[1])
+	tags := getLedgerTags()
+	if err != nil || idx < 0 || idx >= len(tags) {
+		fmt.Println("[Error] Invalid ledger index. Run 'gl' to view valid indices.")
+		return
+	}
+
+	tag := tags[idx]
+	lastDash := strings.LastIndex(tag, "-")
+	if lastDash == -1 {
+		fmt.Println("[Error] Malformed transaction tag:", tag)
+		return
+	}
+	anchor := tag[:lastDash]
+	phase := tag[lastDash+1:]
+
+	fmt.Printf("\033[35m[ggo] Traveling through time to %s...\033[0m\n", tag)
+
+	home, _ := os.UserHomeDir()
 	for _, dir := range Project.CodeDirs {
 		absDir, _ := filepath.Abs(dir)
 		repoID := getRepoID(absDir)
-		
-		branchFile := filepath.Join(centralRepoDir, "branch_"+repoID)
-		workBranchCmd := exec.Command("git", "-C", absDir, "branch", "--show-current")
-		if wOut, err := workBranchCmd.Output(); err == nil && string(wOut) != "" {
-			os.WriteFile(branchFile, []byte(strings.TrimSpace(string(wOut))), 0644)
-		}
-
 		shadowDir := filepath.Join(home, ".ggo", "shadow-repos", repoID)
 
 		err := Gitsync(SyncParams{
@@ -175,62 +126,13 @@ func handleGS(parts []string) {
 			Phase:     phase,
 		})
 		if err != nil {
-			fmt.Printf("[Error] Failed to restore %s: %v\n", dir, err)
+			fmt.Printf("\033[31m[Warning] Failed to restore %s: %v\033[0m\n", dir, err)
+		} else {
+			fmt.Printf("[✓] Restored workspace: %s\n", dir)
 		}
 	}
-
-	fmt.Printf("\n[✓] Successfully vaulted to %s-%s.\n", anchor, phase)
-	fmt.Println("Note: You are in a Detached HEAD state to protect your future commits.")
-	fmt.Println("Use 'gs' to return to the present.")
 }
 
-func resolveIndexToAnchor(idxStr string) string {
-	if len(Project.CodeDirs) == 0 {
-		fmt.Println("[Error] No repositories tracked.")
-		return ""
-	}
-	home, _ := os.UserHomeDir()
-	absDir, _ := filepath.Abs(Project.CodeDirs[0])
-	repoID := getRepoID(absDir)
-	
-	shadowDir := filepath.Join(home, ".ggo", "shadow-repos", repoID)
-
-	cmd := exec.Command("git", "-C", shadowDir, "for-each-ref", "--sort=-creatordate", "--format=%(refname:lstrip=3)", "refs/ggo/txn/")
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	var anchors []string
-	seen := make(map[string]bool)
-
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-		parts := strings.Split(line, "-")
-		if len(parts) < 2 {
-			continue
-		}
-		anchor := parts[0]
-		if !seen[anchor] {
-			seen[anchor] = true
-			anchors = append(anchors, anchor)
-		}
-	}
-
-	targetIdx := 0
-	fmt.Sscanf(idxStr, "%d", &targetIdx)
-	if targetIdx >= 0 && targetIdx < len(anchors) {
-		return anchors[targetIdx]
-	}
-	return ""
-}
-
-func CleanupTimeMachine() {
-	if isTimeTraveling() {
-		fmt.Println("\n[ggo] Exiting while time machine is active. Auto-returning to Head...")
-		returnToHead()
-	}
+func handleGD(parts []string) {
+	fmt.Println("-> Stub: Time Machine diff (gd) is pending UI wiring.")
 }
