@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -14,30 +15,36 @@ const MaxWordsPerChunk = 350000
 
 var chunksCmd = &cobra.Command{
 	Use:   "chunks",
-	Short: "Parses all JSON exports and chunks the markdown ledger for NotebookLM",
+	Short: "Parses all JSON exports and local chats, chunking the markdown ledger for NotebookLM",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		exportDate := Global.ExportDate
 		sourceDir := Global.SourceDir
 		chunksDir := Global.ChunksDir
 		ingestDir := Global.IngestDir
 
-		if exportDate == "" || sourceDir == "" || chunksDir == "" || ingestDir == "" {
-			fmt.Println("[Error] Missing global config. Ensure export_date, source_dir, chunks_dir, and ingest_dir are set.")
+		if sourceDir == "" || chunksDir == "" || ingestDir == "" {
+			fmt.Println("[Error] Missing global config. Ensure source_dir, chunks_dir, and ingest_dir are set.")
 			os.Exit(1)
 		}
 
-		geminiExport := filepath.Join(ingestDir, "gemini", exportDate+"-export")
-		chatgptExport := filepath.Join(ingestDir, "chatgpt", exportDate+"-export")
+		exportDate := Global.ExportDate
+		if exportDate == "" {
+			exportDate = time.Now().Format("2006-01-02")
+			fmt.Printf("[Info] export_date not set, defaulting chunk directory to %s\n", exportDate)
+		}
+
+		geminiExport := filepath.Join(ingestDir, "gemini")
+		chatgptExport := filepath.Join(ingestDir, "chatgpt")
 		finalChunksDir := filepath.Join(chunksDir, exportDate)
 
 		fmt.Println("\n=======================================================")
-		fmt.Printf(" Running Full Parse & Chunk Pipeline for %s\n", exportDate)
+		fmt.Printf(" Running Full Parse & Chunk Pipeline\n")
 		fmt.Println("=======================================================")
 
-		fmt.Println("--- Phase 1: Extracting JSON to Markdown ---")
+		fmt.Println("--- Phase 1: Extracting JSON & Local Chats to Markdown ---")
 		RunGeminiExtract(sourceDir, geminiExport)
 		RunChatGPTExtract(sourceDir, chatgptExport)
+		RunMdchatExtract(sourceDir)
 
 		fmt.Printf("\n--- Phase 2: Starting Chunker ---\n")
 		fmt.Printf("Source Dir:  %s\n", sourceDir)
@@ -54,6 +61,7 @@ func init() {
 func RunChunker(sourceDir, outDir string) {
 	var files []string
 	err := filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+		// FIXED: HasSuffix!
 		if err == nil && !info.IsDir() && strings.HasSuffix(info.Name(), ".md") {
 			files = append(files, path)
 		}

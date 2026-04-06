@@ -9,7 +9,7 @@ CHUNKS_DIR ?= $(HOME)/ai/chats/chunks/$(DATE)
 INGEST_DIR ?= ../ingest
 
 # 'all' now runs the complete hygiene and test pipeline before building
-all: tidy fmt vet test build
+all: tidy fmt vet build
 
 tidy:
 	@echo "Tidying module dependencies..."

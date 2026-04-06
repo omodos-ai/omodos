@@ -23,6 +23,9 @@ var rootCmd = &cobra.Command{
 		needsInit := (Project.ProjectName == "")
 
 		if needsInit {
+			if ForceNew {
+				fmt.Printf("\n[Info] Starting fresh session (-n).")
+			}
 			fmt.Printf("\n[?] This directory is not tracked by ggo.\n")
 			fmt.Printf("Initialize new ggo project tracking here? [Y/n]: ")
 
@@ -44,13 +47,12 @@ var rootCmd = &cobra.Command{
 				os.MkdirAll(filepath.Join(projDir, "chats", "source"), 0755)
 				os.MkdirAll(filepath.Join(projDir, "includes"), 0755)
 
-				// Strictly initialize with NO code directories. Wait for 'inc'.
 				defaultYaml := fmt.Sprintf(`project_name: "%s"
 code_dirs: []
 included_data: []
 shell_cmd: "bash"
 diff_cmd: "emacsclient -c --eval '(ediff-files \"{actual}\" \"{suggestion}\")'"
-model_name: "gemini-3.1-pro-preview"
+model_name: "gemini-2.5-pro"
 `, defaultName)
 
 				centralYamlPath := filepath.Join(projDir, "project.yaml")
@@ -67,12 +69,15 @@ model_name: "gemini-3.1-pro-preview"
 				Global.Projects[defaultName] = cwd
 				GlobalViper.Set("projects", Global.Projects)
 
+				// Set this immediately so the subsequent InitConfig catches it
+				GlobalViper.Set("last_project", defaultName)
+
 				if err := GlobalViper.WriteConfigAs(filepath.Join(home, ".ggo", "config.yaml")); err != nil {
 					fmt.Printf("[!] Failed to save global config: %v\n", err)
 				}
 
 				initGitLFS(projDir)
-				InitConfig()
+				InitConfig() // Re-run to establish state
 
 				fmt.Printf("[Info] Project initialized. Waiting for 'inc <path>' to enroll repositories.\n")
 
@@ -121,4 +126,6 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(InitConfig)
+	// Bind the -n / --new flag to the ForceNew variable
+	rootCmd.PersistentFlags().BoolVarP(&ForceNew, "new", "n", false, "Start a new project or force path-based resolution")
 }

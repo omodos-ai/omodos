@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 
 	"google.golang.org/genai"
 )
@@ -63,9 +64,16 @@ func parseChatHistory(chatPath string) []*genai.Content {
 			}
 
 			respRaw := block[rIdx+len("### Response\n"):]
-			lastDash := strings.LastIndex(respRaw, "---")
-			if lastDash != -1 {
-				respRaw = respRaw[:lastDash]
+
+			// Safely ignore the state update block and trailing dashes
+			sIdx := strings.Index(respRaw, "### State update\n")
+			if sIdx != -1 {
+				respRaw = respRaw[:sIdx]
+			} else {
+				lastDash := strings.LastIndex(respRaw, "---")
+				if lastDash != -1 {
+					respRaw = respRaw[:lastDash]
+				}
 			}
 			response := strings.TrimSpace(respRaw)
 
@@ -104,17 +112,56 @@ func UpdateChatModel() {
 		systemPromptBytes = defaultGeminiMD
 	}
 
+	// Inject the Project Baseline into the System Instruction
+	var sysPromptBuilder strings.Builder
+	sysPromptBuilder.Write(systemPromptBytes)
+	sysPromptBuilder.WriteString("\n\n### Project Baseline Context\n")
+	sysPromptBuilder.WriteString("The following files represent the current read-only baseline state of the project. Use this as your primary knowledge base for the user's environment:\n\n")
+
+	centralIncludesDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "includes")
+	cwd, _ := os.Getwd()
+
+	hasBaseline := false
+	for _, targetPath := range Project.IncludedData {
+		filepath.Walk(targetPath, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			if strings.HasPrefix(info.Name(), ".") && info.Name() != "." {
+				return filepath.SkipDir
+			}
+
+			absPath, _ := filepath.Abs(path)
+			relPath, err := filepath.Rel(cwd, absPath)
+			if err != nil || strings.HasPrefix(relPath, "..") {
+				return nil
+			}
+
+			baselinePath := filepath.Join(centralIncludesDir, relPath)
+			baselineBytes, err := os.ReadFile(baselinePath)
+			if err == nil {
+				sysPromptBuilder.WriteString(fmt.Sprintf("<file path=\"%s\">\n%s\n</file>\n\n", path, string(baselineBytes)))
+				hasBaseline = true
+			}
+			return nil
+		})
+	}
+
+	if !hasBaseline {
+		sysPromptBuilder.WriteString("No files currently included.\n")
+	}
+
 	config := &genai.GenerateContentConfig{
 		SystemInstruction: &genai.Content{
 			Parts: []*genai.Part{
-				{Text: string(systemPromptBytes)},
+				{Text: sysPromptBuilder.String()},
 			},
 		},
 	}
 
 	// Read the active chat file and hydrate the session memory
 	activeChatName := GetActiveChat()
-	chatPath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "chats", "chat-"+activeChatName+".md")
+	chatPath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "chats", activeChatName+".md")
 	history := parseChatHistory(chatPath)
 
 	var errChat error
@@ -124,7 +171,8 @@ func UpdateChatModel() {
 	}
 }
 
-func SendPrompt(ctx context.Context, prompt string) (string, error) {
+// SendPrompt is a variable so it can be safely mocked in the test suite
+var SendPrompt = func(ctx context.Context, prompt string) (string, error) {
 	if chatSession == nil {
 		return "", fmt.Errorf("AI session not initialized")
 	}
@@ -137,6 +185,45 @@ func SendPrompt(ctx context.Context, prompt string) (string, error) {
 		return "", err
 	}
 
+	// --- NEW: Cost & Token Logging Engine ---
+	go func(r *genai.GenerateContentResponse) {
+		if r == nil || r.UsageMetadata == nil {
+			return
+		}
+
+		inputTokens := r.UsageMetadata.PromptTokenCount
+		outputTokens := r.UsageMetadata.CandidatesTokenCount
+		totalTokens := r.UsageMetadata.TotalTokenCount
+
+		// Pricing as of April 2026 for Gemini 1.5/2.5 Pro (under 128k context)
+		// $1.25 per 1M input tokens, $5.00 per 1M output tokens
+		inputCost := float64(inputTokens) * (1.25 / 1000000.0)
+		outputCost := float64(outputTokens) * (5.00 / 1000000.0)
+		totalCost := inputCost + outputCost
+
+		home, _ := os.UserHomeDir()
+		logDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
+		logPath := filepath.Join(logDir, "cost.csv")
+
+		// Write CSV Header if file doesn't exist
+		if _, statErr := os.Stat(logPath); os.IsNotExist(statErr) {
+			os.WriteFile(logPath, []byte("Timestamp,Chat,InputTokens,OutputTokens,TotalTokens,EstCostUSD\n"), 0644)
+		}
+
+		now := time.Now().UTC().Format(time.RFC3339)
+		activeChat := GetActiveChat()
+
+		logLine := fmt.Sprintf("%s,%s,%d,%d,%d,$%.6f\n",
+			now, activeChat, inputTokens, outputTokens, totalTokens, totalCost)
+
+		f, fileErr := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if fileErr == nil {
+			f.WriteString(logLine)
+			f.Close()
+		}
+	}(resp)
+	// ----------------------------------------
+
 	return resp.Text(), nil
 }
 
@@ -148,7 +235,6 @@ func FetchAndListModels(ctx context.Context) {
 
 	fmt.Println("Fetching available models...")
 
-	// aiClient.Models.List returns exactly 2 values in the modern SDK
 	resp, err := aiClient.Models.List(ctx, nil)
 	if err != nil {
 		fmt.Printf("[Error] Failed to fetch models: %v\n", err)
@@ -157,7 +243,6 @@ func FetchAndListModels(ctx context.Context) {
 
 	View.ModelList = []string{}
 
-	// Robust reflection to extract the models safely, protecting against undocumented SDK structure shifts
 	val := reflect.ValueOf(resp)
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
@@ -194,7 +279,6 @@ func FetchAndListModels(ctx context.Context) {
 			}
 		}
 
-		// Fallback for iterator struct with .Next()
 		if !found {
 			nextMethod := reflect.ValueOf(resp).MethodByName("Next")
 			if nextMethod.IsValid() {
@@ -225,7 +309,6 @@ func FetchAndListModels(ctx context.Context) {
 		}
 	}
 
-	// Ultimate safety net
 	if len(View.ModelList) == 0 {
 		View.ModelList = []string{"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-pro-exp"}
 	}

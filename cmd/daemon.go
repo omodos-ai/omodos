@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,28 +15,30 @@ func InitDaemon() {
 	runDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "run")
 	os.MkdirAll(runDir, 0755)
 
-	pipes := []string{"prompt.pipe", "control.pipe", "shell-1.pipe", "shell-2.pipe", "shell-3.pipe"}
+	// Added response.pipe for bidirectional IPC
+	pipes := []string{"prompt.pipe", "control.pipe", "response.pipe", "shell-1.pipe", "shell-2.pipe"}
 
 	for _, p := range pipes {
 		pipePath := filepath.Join(runDir, p)
-		// Clean up stale pipes from previous crashes
-		os.Remove(pipePath)
+		os.Remove(pipePath) // Sweep stale pipes
 
-		// Create the Named Pipe (FIFO)
 		err := syscall.Mkfifo(pipePath, 0600)
 		if err != nil {
 			fmt.Printf("[Warning] Failed to create pipe %s: %v\n", p, err)
 			continue
 		}
 
-		// Spin up a concurrent listener for each pipe
-		go listenPipe(pipePath, p)
+		// Only spawn reader goroutines for incoming pipes!
+		// The daemon exclusively writes to the response.pipe.
+		if p != "response.pipe" {
+			go listenPipe(pipePath, p)
+		}
 	}
 }
 
 func listenPipe(pipePath string, pipeName string) {
 	for {
-		// os.OpenFile blocks until a writer connects to the pipe
+		// Blocks until Editor (or Test) opens the pipe to write
 		file, err := os.OpenFile(pipePath, os.O_RDONLY, os.ModeNamedPipe)
 		if err != nil {
 			continue
@@ -65,11 +68,17 @@ func routePayload(pipeName, payload string) {
 	case "control.pipe":
 		handleControlSignal(payload)
 	case "prompt.pipe":
-		// TODO: Wire to Gemini API and active_chat.md
-		fmt.Printf("\n\033[90m[daemon:prompt] Received %d bytes. (API routing pending)...\033[0m\nggo> ", len(payload))
+		// Offload API call to a goroutine so the daemon doesn't block other pipes
+		go func(p string) {
+			resp, err := DispatchPrompt(context.Background(), p, "ggo-editor-ipc")
+			if err != nil {
+				sendToResponsePipe(fmt.Sprintf("[ggo API Error]\n%v\n", err))
+			} else {
+				sendToResponsePipe(resp + "\n")
+			}
+		}(payload)
 	default:
 		if strings.HasPrefix(pipeName, "shell-") {
-			// TODO: Store shell blob in memory buffer for the next prompt
 			fmt.Printf("\n\033[90m[daemon:%s] Captured %d bytes of shell output.\033[0m\nggo> ", pipeName, len(payload))
 		}
 	}
@@ -78,18 +87,48 @@ func routePayload(pipeName, payload string) {
 func handleControlSignal(signal string) {
 	signal = strings.ToUpper(strings.TrimSpace(signal))
 	switch signal {
-	case "INTERRUPT":
-		fmt.Print("\n\033[33m[daemon] Intercepted INTERRUPT signal. Halting AI stream...\033[0m\nggo> ")
-		// TODO: Trigger context cancellation for Gemini API
+	case "ABORT":
+		// TODO: Trigger context cancellation
+		sendToResponsePipe("[ggo Control] ABORT received. AI stream halted.\n")
+	case "END_CHAT":
+		sendToResponsePipe("[ggo Control] Shutting down session.\n")
+		CleanupDaemon()
+		os.Exit(0)
+	case "WRITE_FILES", "WF":
+		if lastAPIResponse != "" {
+			count, err := ApplyMacroEdits(lastAPIResponse)
+			if err != nil {
+				sendToResponsePipe(fmt.Sprintf("[ggo Macro Error] %v\n", err))
+			} else {
+				sendToResponsePipe(fmt.Sprintf("[ggo Control] Successfully extracted and applied %d file modification(s).\n", count))
+			}
+		} else {
+			sendToResponsePipe("[ggo Warning] Ignored WF signal: No recent AI response in memory.\n")
+		}
 	default:
-		fmt.Printf("\n\033[90m[daemon] Unknown control signal: %s\033[0m\nggo> ", signal)
+		sendToResponsePipe(fmt.Sprintf("[ggo Warning] Unknown control signal: %s\n", signal))
 	}
+}
+
+// sendToResponsePipe pushes data to Emacs. If Emacs isn't listening,
+// it drops the payload rather than hanging the entire ggo daemon.
+func sendToResponsePipe(msg string) {
+	home, _ := os.UserHomeDir()
+	pipePath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "run", "response.pipe")
+
+	// Open O_WRONLY blocks until Emacs opens it O_RDONLY.
+	file, err := os.OpenFile(pipePath, os.O_WRONLY, os.ModeNamedPipe)
+	if err != nil {
+		fmt.Printf("\n\033[33m[daemon] Editor not reading response.pipe. Payload dropped.\033[0m\nggo> ")
+		return
+	}
+	defer file.Close()
+	file.WriteString(msg)
 }
 
 func CleanupDaemon() {
 	home, _ := os.UserHomeDir()
 	runDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "run")
-	// Sweep the pipes so they don't litter the filesystem when ggo exits
 	files, _ := filepath.Glob(filepath.Join(runDir, "*.pipe"))
 	for _, f := range files {
 		os.Remove(f)

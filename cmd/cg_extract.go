@@ -36,15 +36,24 @@ type Message struct {
 }
 
 func RunChatGPTExtract(sourceDir, exportDir string) {
-	// Build Global Attachment Index
 	var validAttachments []string
-	absExportDir, _ := filepath.Abs(exportDir)
-	entries, _ := os.ReadDir(exportDir)
-	for _, entry := range entries {
-		if !entry.IsDir() && !strings.HasSuffix(entry.Name(), ".json") && !strings.HasSuffix(entry.Name(), ".html") {
-			validAttachments = append(validAttachments, filepath.Join(absExportDir, entry.Name()))
+	var jsonFiles []string
+
+	filepath.Walk(exportDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
 		}
-	}
+
+		name := info.Name()
+		if strings.HasPrefix(name, "conversations") && strings.HasSuffix(name, ".json") {
+			jsonFiles = append(jsonFiles, path)
+		} else if !strings.HasSuffix(name, ".json") && !strings.HasSuffix(name, ".html") {
+			absPath, _ := filepath.Abs(path)
+			validAttachments = append(validAttachments, absPath)
+		}
+		return nil
+	})
+
 	if len(validAttachments) > 0 {
 		idxPath := filepath.Join(sourceDir, "0000_ChatGPT_Attachments_Index.md")
 		os.MkdirAll(sourceDir, 0755)
@@ -53,13 +62,6 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 			idxContent += fmt.Sprintf("- [Local Path: %s]\n", att)
 		}
 		os.WriteFile(idxPath, []byte(idxContent), 0644)
-	}
-
-	var jsonFiles []string
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasPrefix(entry.Name(), "conversations") && strings.HasSuffix(entry.Name(), ".json") {
-			jsonFiles = append(jsonFiles, filepath.Join(exportDir, entry.Name()))
-		}
 	}
 
 	totalInteractions := 0
@@ -80,7 +82,6 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 				continue
 			}
 
-			// Traverse DAG
 			var linearTimeline []Node
 			currID := conv.CurrentNode
 			for currID != "" {
@@ -92,12 +93,10 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 				currID = node.Parent
 			}
 
-			// Reverse to chronological
 			for i, j := 0, len(linearTimeline)-1; i < j; i, j = i+1, j-1 {
 				linearTimeline[i], linearTimeline[j] = linearTimeline[j], linearTimeline[i]
 			}
 
-			// State Machine
 			var currentPrompt string
 			var currentResponseParts []string
 			var promptTime time.Time
@@ -110,12 +109,13 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 				}
 
 				if promptTime.IsZero() {
-					promptTime = time.Unix(int64(conv.CreateTime), 0)
+					// LOCK TO UTC
+					promptTime = time.Unix(int64(conv.CreateTime), 0).UTC()
 				}
 
 				year := fmt.Sprintf("%04d", promptTime.Year())
 				month := fmt.Sprintf("%02d", promptTime.Month())
-				timestamp := promptTime.Format("20060102T150405")
+				timestamp := promptTime.Format("20060102T150405Z") // Added Z
 
 				safeSubject := makeSafeFilenameCG(conv.Title)
 				if len(safeSubject) > 30 {
@@ -166,7 +166,6 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 				os.WriteFile(filepath.Join(targetPath, filename), []byte(mdContent), 0644)
 				totalInteractions++
 
-				// Reset state
 				currentPrompt = ""
 				currentResponseParts = nil
 				capturedAttachments = nil
@@ -213,10 +212,11 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 				}
 
 				if role == "user" {
-					writePair() // Flush previous turn
+					writePair()
 					currentPrompt = text
 					if node.Message.CreateTime > 0 {
-						promptTime = time.Unix(int64(node.Message.CreateTime), 0)
+						// LOCK TO UTC
+						promptTime = time.Unix(int64(node.Message.CreateTime), 0).UTC()
 					}
 				} else if role == "assistant" || role == "tool" {
 					if text != "" {
@@ -224,7 +224,7 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 					}
 				}
 			}
-			writePair() // Flush final turn
+			writePair()
 		}
 	}
 
@@ -233,5 +233,6 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 
 func makeSafeFilenameCG(str string) string {
 	reg, _ := regexp.Compile("[^a-zA-Z0-9]+")
-	return strings.Trim(reg.ReplaceAllString(str, "_"), "_")
+	slug := strings.Trim(reg.ReplaceAllString(str, "-"), "-")
+	return strings.ToLower(slug)
 }

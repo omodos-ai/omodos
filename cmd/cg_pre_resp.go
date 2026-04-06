@@ -13,16 +13,15 @@ var cgPrRespCmd = &cobra.Command{
 	Short: "Parses ChatGPT JSON exports into the markdown ledger",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		if Global.SourceDir == "" || Global.IngestDir == "" || Global.ExportDate == "" {
-			fmt.Println("[Error] Missing global config. Ensure source_dir, ingest_dir, and export_date are set.")
+		if Global.SourceDir == "" || Global.IngestDir == "" {
+			fmt.Println("[Error] Missing global config. Ensure source_dir and ingest_dir are set.")
 			os.Exit(1)
 		}
 
-		exportDir := filepath.Join(Global.IngestDir, "chatgpt", Global.ExportDate+"-export")
-
+		exportDir := filepath.Join(Global.IngestDir, "chatgpt")
 		fmt.Printf("Starting ChatGPT Parse Pipeline...\n")
 		fmt.Printf("Source Dir: %s\n", Global.SourceDir)
-		fmt.Printf("Export Dir: %s\n", exportDir)
+		fmt.Printf("Ingest Dir: %s\n", exportDir)
 
 		RunChatGPTExtract(Global.SourceDir, exportDir)
 	},

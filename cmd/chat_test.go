@@ -19,6 +19,11 @@ func TestLiveEndToEndChatAndContext(t *testing.T) {
 		t.Skip("Skipping live test: not running from within a configured ggo project root.")
 	}
 
+	// Create a temporary source_dir for the test so we don't pollute the actual global directory
+	tempSourceDir, _ := os.MkdirTemp(".", "tmp-source-dir-*")
+	origSourceDir := Global.SourceDir
+	Global.SourceDir = tempSourceDir
+
 	// 2. Setup local sandbox inside the real working directory
 	tempDir, err := os.MkdirTemp(".", "tmp-chat-test-*")
 	if err != nil {
@@ -29,13 +34,15 @@ func TestLiveEndToEndChatAndContext(t *testing.T) {
 	origIncludes := append([]string(nil), Project.IncludedData...)
 	defer func() {
 		os.RemoveAll(tempDir)
-		
+		os.RemoveAll(tempSourceDir)
+		Global.SourceDir = origSourceDir
+
 		Project.IncludedData = origIncludes
 		home, _ := os.UserHomeDir()
 		ProjectViper.Set("included_data", Project.IncludedData)
 		ProjectViper.WriteConfigAs(filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "project.yaml"))
-		
-		os.Remove(filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "chats", "chat-live_test_chat.md"))
+
+		os.Remove(filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "chats", "live_test_chat.md"))
 	}()
 
 	testFile := filepath.Join(tempDir, "system_config.txt")
@@ -48,7 +55,7 @@ func TestLiveEndToEndChatAndContext(t *testing.T) {
 	runScript(script1)
 
 	home, _ := os.UserHomeDir()
-	chatPath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "chats", "chat-live_test_chat.md")
+	chatPath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "chats", "live_test_chat.md")
 
 	contentBytes, err := os.ReadFile(chatPath)
 	if err != nil {
@@ -82,6 +89,11 @@ func TestLiveEndToEndChatAndContext(t *testing.T) {
 	}
 	if !strings.Contains(stage2Block, "STATUS=ONLINE") {
 		t.Fatalf("Expected the modified full text to be in the JIT payload, but it wasn't.")
+	}
+
+	// Verify State Update block was appended
+	if !strings.Contains(stage2Block, "### State update") {
+		t.Fatalf("Expected '### State update' to be appended to the schema.")
 	}
 
 	// VERIFY COGNITIVE UNDERSTANDING: Check Gemini's actual response

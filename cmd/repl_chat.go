@@ -35,7 +35,6 @@ func handleCC(parts []string) {
 	}
 	ActiveChatName = parts[1]
 
-	// 1. Persist the active chat to the project config
 	ProjectViper.Set("active_chat", ActiveChatName)
 	home, _ := os.UserHomeDir()
 	ProjectViper.WriteConfigAs(filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "project.yaml"))
@@ -43,7 +42,7 @@ func handleCC(parts []string) {
 	chatDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "chats")
 	os.MkdirAll(chatDir, 0755)
 
-	filePath := filepath.Join(chatDir, "chat-"+ActiveChatName+".md")
+	filePath := filepath.Join(chatDir, ActiveChatName+".md")
 
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		header := fmt.Sprintf("# 🧠 ggo Chat: %s\n*Started: %s*\n\n", ActiveChatName, time.Now().Format("2006-01-02 15:04:05"))
@@ -53,7 +52,6 @@ func handleCC(parts []string) {
 		fmt.Printf("[Info] Activated existing chat: %s\n", ActiveChatName)
 	}
 
-	// 2. Hydration Hook: Re-initialize the API to load the new chat's history
 	UpdateChatModel()
 }
 
@@ -159,12 +157,10 @@ func buildJITContextAndSync() string {
 	return "-"
 }
 
-func sendAndRender(ctx context.Context, prompt string) {
+// DispatchPrompt handles JIT context packing, API routing, clipboard pushes,
+// and transactional ledger recording. It returns the sanitized output for the Daemon/REPL.
+func DispatchPrompt(ctx context.Context, prompt string, source string) (string, error) {
 	activeChat := GetActiveChat()
-
-	fmt.Printf("\033[90mThinking...\033[0m\n\n")
-
-	// 1. Compute the JIT Context Protocol
 	contextStr := buildJITContextAndSync()
 
 	apiPrompt := prompt
@@ -172,25 +168,20 @@ func sendAndRender(ctx context.Context, prompt string) {
 		apiPrompt = contextStr + "\n\n" + prompt
 	}
 
-	// 2. Dispatch to Gemini
 	response, err := SendPrompt(ctx, apiPrompt)
 	if err != nil {
-		fmt.Printf("\033[31m[API Error]\033[0m %v\n", err)
-		return
+		return "", err
 	}
 	lastAPIResponse = response
 
-	// 3. RAW TERMINAL OUTPUT
-	fmt.Println(response)
-	fmt.Println()
+	autoCopyToClipboard(response)
 
-	// 4. METADATA EXTRACTION FOR SCHEMA
 	now := time.Now().UTC()
 	dateISO := now.Format("2006-01-02T15:04:05Z")
 	filenameTime := now.Format("20060102T150405")
+	anchor := now.Format("20060102T150405Z")
 	year := now.Format("2006")
 	month := now.Format("01")
-
 	cwd, _ := os.Getwd()
 
 	modelName := "gemini-2.5-pro"
@@ -208,14 +199,12 @@ func sendAndRender(ctx context.Context, prompt string) {
 	}
 	includesStr := strings.TrimSpace(includesBuilder.String())
 
-	// Subject & Slug Generation
 	words := strings.Fields(prompt)
 	limit := 5
 	if len(words) < limit {
 		limit = len(words)
 	}
 	subjectStr := strings.Join(words[:limit], " ")
-
 	reg := regexp.MustCompile(`[^a-zA-Z0-9]+`)
 	slug := reg.ReplaceAllString(subjectStr, "-")
 	slug = strings.ToLower(strings.Trim(slug, "-"))
@@ -226,14 +215,13 @@ func sendAndRender(ctx context.Context, prompt string) {
 		slug = "interaction"
 	}
 
-	// 5. BUILD THE EXACT DESIGN DOCUMENT SCHEMA
 	record := fmt.Sprintf(`## AI Interaction
 ### Date
 %s
 ### Chat
 %s
 ### Source
-ggo-cli / %s
+%s / %s
 ### Includes
 %s
 ### Current working directory
@@ -248,30 +236,75 @@ ggo-cli / %s
 ### Response
 %s
 
----
-`, dateISO, activeChat, modelName, includesStr, cwd, subjectStr, contextStr, prompt, response)
+### State update
+- Transaction Anchor: %s
 
-	// 6. APPEND TO ACTIVE CHAT
+---
+`, dateISO, activeChat, source, modelName, includesStr, cwd, subjectStr, contextStr, prompt, response, anchor)
+
 	home, _ := os.UserHomeDir()
-	chatPath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "chats", "chat-"+activeChat)
-	if !strings.HasSuffix(chatPath, ".md") {
-		chatPath += ".md"
-	}
+	chatPath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "chats", activeChat+".md")
 	f, err := os.OpenFile(chatPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err == nil {
 		f.WriteString(record)
 		f.Close()
 	}
 
-	// 7. WRITE TO /tmp/sources ARCHIVE
-	sourcesDir := filepath.Join("/tmp", "sources", year, month)
-	os.MkdirAll(sourcesDir, 0755)
+	if Global.SourceDir != "" {
+		sourcesDir := filepath.Join(Global.SourceDir, year, month)
+		os.MkdirAll(sourcesDir, 0755)
+		archivePath := filepath.Join(sourcesDir, fmt.Sprintf("%s-%s.md", filenameTime, slug))
+		os.WriteFile(archivePath, []byte(record), 0644)
+	}
 
-	archiveFilename := fmt.Sprintf("%s-%s.md", filenameTime, slug)
-	archivePath := filepath.Join(sourcesDir, archiveFilename)
+	// Sanitize output for safe consumption by Emacs/Terminals
+	cleanResp := strings.ReplaceAll(response, "\x00", "")
+	cleanResp = strings.ReplaceAll(cleanResp, "\x1b", "")
 
-	os.WriteFile(archivePath, []byte(record), 0644)
+	return cleanResp, nil
+}
 
-	// Visual confirmation in the REPL
-	fmt.Printf("\033[90m[ggo] Interaction Schema Recorded: %s\033[0m\n", archivePath)
+// sendAndRender is the CLI-specific wrapper that prints to standard out.
+func sendAndRender(ctx context.Context, prompt string) {
+	fmt.Printf("\033[90mThinking...\033[0m\n\n")
+
+	response, err := DispatchPrompt(ctx, prompt, "ggo-cli")
+	if err != nil {
+		fmt.Printf("\033[31m[API Error]\033[0m %v\n", err)
+		return
+	}
+	fmt.Println(response)
+	fmt.Println()
+}
+
+func autoCopyToClipboard(response string) {
+	re := regexp.MustCompile(`(?s)` + "```" + `[a-zA-Z0-9]*\n(.*?)\n` + "```")
+	matches := re.FindAllStringSubmatch(response, -1)
+
+	if len(matches) > 0 {
+		var sb strings.Builder
+		for i, m := range matches {
+			snippet := sanitizeSnippet(m[1])
+			sb.WriteString(snippet)
+			if i < len(matches)-1 {
+				sb.WriteString("\n\n")
+			}
+		}
+
+		finalClipboardText := sb.String()
+		if finalClipboardText != "" {
+			err := clipboard.WriteAll(finalClipboardText)
+			if err != nil {
+				fmt.Printf("\033[33m[Warning] Failed to write snippets to clipboard: %v\033[0m\n", err)
+			} else {
+				fmt.Printf("\033[32m[✓] Auto-extracted %d snippet(s) to OS clipboard.\033[0m\n\n", len(matches))
+			}
+		}
+	}
+}
+
+func sanitizeSnippet(text string) string {
+	text = strings.ReplaceAll(text, "\x00", "")
+	text = strings.ReplaceAll(text, "\x1b", "")
+	return strings.TrimSpace(text)
 }

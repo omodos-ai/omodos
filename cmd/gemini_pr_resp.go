@@ -13,16 +13,15 @@ var geminiPrRespCmd = &cobra.Command{
 	Short: "Parses Gemini JSON exports into the markdown ledger",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		if Global.SourceDir == "" || Global.IngestDir == "" || Global.ExportDate == "" {
-			fmt.Println("[Error] Missing global config. Ensure source_dir, ingest_dir, and export_date are set.")
+		if Global.SourceDir == "" || Global.IngestDir == "" {
+			fmt.Println("[Error] Missing global config. Ensure source_dir and ingest_dir are set.")
 			os.Exit(1)
 		}
 
-		exportDir := filepath.Join(Global.IngestDir, "gemini", Global.ExportDate+"-export")
-
+		exportDir := filepath.Join(Global.IngestDir, "gemini")
 		fmt.Printf("Starting Gemini Parse Pipeline...\n")
 		fmt.Printf("Source Dir: %s\n", Global.SourceDir)
-		fmt.Printf("Export Dir: %s\n", exportDir)
+		fmt.Printf("Ingest Dir: %s\n", exportDir)
 
 		RunGeminiExtract(Global.SourceDir, exportDir)
 	},

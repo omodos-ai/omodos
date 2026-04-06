@@ -23,3 +23,6 @@ You must wrap the complete, updated file content in `<file>` tags, specifying th
 </file>
 
 If you are modifying multiple files, output multiple `<file>` blocks.
+
+### Micro-Edits and Commands (Snippets)
+If you are providing shell commands, small code patches, or configuration snippets that the user should execute or paste manually, you MUST wrap them in standard Markdown code blocks (e.g., ```bash, ```go, ```text). Do not mix explanation text inside the code blocks. The system will automatically extract these blocks and push them to the user's OS clipboard.

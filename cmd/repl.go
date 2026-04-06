@@ -63,6 +63,8 @@ func RunREPL() {
 		readline.PcItem("ps"), // Multi-line prompt + Clipboard
 		readline.PcItem("cr"),
 		readline.PcItem("cw", readline.PcItemDynamic(listFiles)),
+		readline.PcItem("wf"),          // Write Files
+		readline.PcItem("write-files"), // Write Files alias
 		readline.PcItem("gl"),
 		readline.PcItem("gd"),
 		readline.PcItem("gs"),
@@ -181,6 +183,8 @@ func executeCommand(ctx context.Context, line string, l *readline.Instance) bool
 		handleCR()
 	case "cw":
 		handleCW(parts)
+	case "wf", "write-files":
+		handleWF()
 	case "gl":
 		handleGL(parts)
 	case "gd":

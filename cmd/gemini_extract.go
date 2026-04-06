@@ -22,23 +22,29 @@ type GeminiRecord struct {
 }
 
 func RunGeminiExtract(sourceDir, exportDir string) {
-	geminiAppsDir := filepath.Join(exportDir, "My Activity", "Gemini Apps")
-	jsonPath := filepath.Join(geminiAppsDir, "MyActivity.json")
+	var validAttachments []string
+	var jsonPath string
 
-	if _, err := os.Stat(jsonPath); os.IsNotExist(err) {
-		fmt.Printf("[!] Could not find %s, skipping...\n", jsonPath)
+	filepath.Walk(exportDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+
+		name := info.Name()
+		if name == "MyActivity.json" {
+			jsonPath = path
+		} else if !strings.HasSuffix(name, ".json") && !strings.HasSuffix(name, ".html") {
+			absPath, _ := filepath.Abs(path)
+			validAttachments = append(validAttachments, absPath)
+		}
+		return nil
+	})
+
+	if jsonPath == "" {
+		fmt.Printf("[!] Could not find MyActivity.json in %s, skipping...\n", exportDir)
 		return
 	}
 
-	// Build Global Attachment Index (ONCE)
-	var validAttachments []string
-	absGeminiDir, _ := filepath.Abs(geminiAppsDir)
-	entries, _ := os.ReadDir(geminiAppsDir)
-	for _, entry := range entries {
-		if !entry.IsDir() && !strings.HasSuffix(entry.Name(), ".json") && !strings.HasSuffix(entry.Name(), ".html") {
-			validAttachments = append(validAttachments, filepath.Join(absGeminiDir, entry.Name()))
-		}
-	}
 	if len(validAttachments) > 0 {
 		idxPath := filepath.Join(sourceDir, "0000_Gemini_Attachments_Index.md")
 		os.MkdirAll(sourceDir, 0755)
@@ -56,17 +62,15 @@ func RunGeminiExtract(sourceDir, exportDir string) {
 	var records []GeminiRecord
 	json.Unmarshal(bytes, &records)
 
-	// Reverse records to be strictly chronological (oldest to newest)
 	for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
 		records[i], records[j] = records[j], records[i]
 	}
 
 	count := 0
 
-	// Traverse timeline
 	for _, rec := range records {
 		if !strings.HasPrefix(rec.Title, "Prompted ") {
-			continue // Skip non-conversational events
+			continue
 		}
 
 		prompt := strings.TrimPrefix(rec.Title, "Prompted ")
@@ -74,6 +78,9 @@ func RunGeminiExtract(sourceDir, exportDir string) {
 		if err != nil {
 			continue
 		}
+
+		// LOCK TO UTC
+		promptTime = promptTime.UTC()
 
 		var responseText string
 		if len(rec.SafeHtmlItem) > 0 {
@@ -105,7 +112,7 @@ func RunGeminiExtract(sourceDir, exportDir string) {
 
 		year := fmt.Sprintf("%04d", promptTime.Year())
 		month := fmt.Sprintf("%02d", promptTime.Month())
-		timestamp := promptTime.Format("20060102T150405")
+		timestamp := promptTime.Format("20060102T150405Z") // Added Z
 
 		safeSubject := makeSafeFilenameGemini(prompt)
 		if len(safeSubject) > 30 {
@@ -145,5 +152,6 @@ func RunGeminiExtract(sourceDir, exportDir string) {
 
 func makeSafeFilenameGemini(str string) string {
 	reg, _ := regexp.Compile("[^a-zA-Z0-9]+")
-	return strings.Trim(reg.ReplaceAllString(str, "_"), "_")
+	slug := strings.Trim(reg.ReplaceAllString(str, "-"), "-")
+	return strings.ToLower(slug)
 }
