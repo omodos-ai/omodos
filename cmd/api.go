@@ -196,10 +196,15 @@ var SendPrompt = func(ctx context.Context, prompt string) (string, error) {
 		totalTokens := r.UsageMetadata.TotalTokenCount
 
 		// Pricing as of April 2026 for Gemini 1.5/2.5 Pro (under 128k context)
-		// $1.25 per 1M input tokens, $5.00 per 1M output tokens
 		inputCost := float64(inputTokens) * (1.25 / 1000000.0)
 		outputCost := float64(outputTokens) * (5.00 / 1000000.0)
 		totalCost := inputCost + outputCost
+
+		// --- NEW: TOKEN WARNING THRESHOLD ---
+		// Warn the user if the context is getting dangerously large
+		if totalTokens > 100000 {
+			fmt.Printf("\n\033[33m[⚠️ ggo Warning] Context size is massive (%d tokens). API costs are scaling quadratically. Consider using NotebookLM to summarize this chat and starting fresh (/cc new_chat).\033[0m\n", totalTokens)
+		}
 
 		home, _ := os.UserHomeDir()
 		logDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)

@@ -116,7 +116,7 @@ Do not use markdown codeblocks inside the XML.
 2. Path: "%s", Content: "Live Test Data 2"`, file1Path, file2Path)
 
 	// Send to LLM
-	sendAndRender(ctx, prompt)
+	sendAndRender(ctx, prompt, false, os.Stdout)
 
 	// Apply the edits from the in-memory response buffer
 	count, err := ApplyMacroEdits(lastAPIResponse)

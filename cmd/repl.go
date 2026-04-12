@@ -17,6 +17,84 @@ import (
 )
 
 var lastAPIResponse string
+var ResponsePipe *os.File
+
+type InputEvent struct {
+	Source  string // "terminal", "prompt_pipe", "control_pipe"
+	Payload string
+}
+
+func setupPipes() {
+	if Project.ProjectName == "" {
+		return
+	}
+	home, _ := os.UserHomeDir()
+	runDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "run")
+	os.MkdirAll(runDir, 0755)
+
+	pipes := []string{
+		filepath.Join(runDir, "prompt.pipe"),
+		filepath.Join(runDir, "control.pipe"),
+		filepath.Join(runDir, "response.pipe"),
+	}
+
+	for _, p := range pipes {
+		if info, err := os.Stat(p); err == nil {
+			if info.Mode()&os.ModeNamedPipe == 0 {
+				os.Remove(p)
+				syscall.Mkfifo(p, 0600)
+			}
+		} else {
+			syscall.Mkfifo(p, 0600)
+		}
+	}
+
+	// Open Response Pipe as O_RDWR so it never blocks/closes on the writer side when Emacs disconnects
+	var err error
+	ResponsePipe, err = os.OpenFile(pipes[2], os.O_RDWR, os.ModeNamedPipe)
+	if err != nil {
+		fmt.Printf("[Warning] Could not open response.pipe: %v\n", err)
+	}
+}
+
+func listenPromptPipe(eventChan chan<- InputEvent) {
+	home, _ := os.UserHomeDir()
+	pipePath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "run", "prompt.pipe")
+	for {
+		pFile, err := os.OpenFile(pipePath, os.O_RDONLY, os.ModeNamedPipe)
+		if err != nil {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		bytes, _ := io.ReadAll(pFile)
+		pFile.Close()
+
+		prompt := strings.TrimSpace(string(bytes))
+		if prompt != "" {
+			eventChan <- InputEvent{Source: "prompt_pipe", Payload: prompt}
+		}
+	}
+}
+
+func listenControlPipe(eventChan chan<- InputEvent) {
+	home, _ := os.UserHomeDir()
+	pipePath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "run", "control.pipe")
+	for {
+		cFile, err := os.OpenFile(pipePath, os.O_RDONLY, os.ModeNamedPipe)
+		if err != nil {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		scanner := bufio.NewScanner(cFile)
+		for scanner.Scan() {
+			cmdStr := strings.TrimSpace(scanner.Text())
+			if cmdStr != "" {
+				eventChan <- InputEvent{Source: "control_pipe", Payload: cmdStr}
+			}
+		}
+		cFile.Close()
+	}
+}
 
 func RunREPL() {
 	sigChan := make(chan os.Signal, 1)
@@ -57,14 +135,20 @@ func RunREPL() {
 		readline.PcItem("context-include", readline.PcItemDynamic(listFiles)),
 		readline.PcItem("inc", readline.PcItemDynamic(listFiles)),
 		readline.PcItem("git-add-repo", readline.PcItemDynamic(listFiles)),
-		readline.PcItem("gr", readline.PcItemDynamic(listFiles)),
-		readline.PcItem("cc"), // Chat Create/Switch
-		readline.PcItem("p"),  // Multi-line prompt
-		readline.PcItem("ps"), // Multi-line prompt + Clipboard
+		readline.PcItem("git-remote", readline.PcItem("push"), readline.PcItem("pull"), readline.PcItem("clone")),
+		readline.PcItem("gr",
+			readline.PcItem("push"),
+			readline.PcItem("pull"),
+			readline.PcItem("clone"),
+			readline.PcItemDynamic(listFiles),
+		),
+		readline.PcItem("cc"),
+		readline.PcItem("p"),
+		readline.PcItem("ps"),
 		readline.PcItem("cr"),
 		readline.PcItem("cw", readline.PcItemDynamic(listFiles)),
-		readline.PcItem("wf"),          // Write Files
-		readline.PcItem("write-files"), // Write Files alias
+		readline.PcItem("wf"),
+		readline.PcItem("write-files"),
 		readline.PcItem("gl"),
 		readline.PcItem("gd"),
 		readline.PcItem("gs"),
@@ -95,25 +179,63 @@ func RunREPL() {
 		fmt.Printf("[OK]\n")
 	}
 
-	fmt.Printf("Welcome to ggo [%s]. Type 'quit' to exit.\n", Project.ProjectName)
+	// 1. Initialize IPC
+	setupPipes()
 
-	for {
-		line, err := l.Readline()
-		if err == readline.ErrInterrupt {
-			if len(line) == 0 {
-				break
-			} else {
+	// 2. Create the Central Event Bus
+	eventChan := make(chan InputEvent)
+
+	// 3. Start Pipe Listeners
+	go listenPromptPipe(eventChan)
+	go listenControlPipe(eventChan)
+
+	// 4. Start Terminal Listener
+	go func() {
+		for {
+			line, err := l.Readline()
+			if err == readline.ErrInterrupt {
+				if len(line) == 0 {
+					eventChan <- InputEvent{Source: "terminal", Payload: "exit"}
+					return
+				}
 				continue
+			} else if err == io.EOF {
+				eventChan <- InputEvent{Source: "terminal", Payload: "exit"}
+				return
 			}
-		} else if err == io.EOF {
+			eventChan <- InputEvent{Source: "terminal", Payload: line}
+		}
+	}()
+
+	fmt.Printf("Welcome to ggo [%s]. Unified Hub Active. Type 'quit' to exit.\n", Project.ProjectName)
+
+	// 5. The Central State Machine (Multiplexer)
+	for event := range eventChan {
+		if event.Payload == "quit" || event.Payload == "exit" {
+			fmt.Println("Flushing ledger and exiting...")
 			break
 		}
 
-		// Pass the readline instance down so 'p' and 'ps' can take control of it
-		if exit := executeCommand(ctx, line, l); exit {
-			break
+		var stdout io.Writer = os.Stdout
+		if l != nil {
+			stdout = l.Stdout()
+		}
+
+		if event.Source == "prompt_pipe" {
+			fmt.Fprintf(stdout, "\n\033[35m[Emacs Prompt]\033[0m %s\n", event.Payload)
+			executeCommand(ctx, event.Payload, l, true)
+		} else if event.Source == "control_pipe" {
+			fmt.Fprintf(stdout, "\n\033[35m[Emacs Control]\033[0m %s\n", event.Payload)
+			if strings.ToUpper(event.Payload) == "WF" {
+				handleWF()
+			} else {
+				executeCommand(ctx, event.Payload, l, true)
+			}
+		} else {
+			executeCommand(ctx, event.Payload, l, false)
 		}
 	}
+
 	CleanupTimeMachine()
 }
 
@@ -128,14 +250,13 @@ func RunHeadless(ctx context.Context) {
 			continue
 		}
 		fmt.Printf("\n> %s\n", line)
-		// Headless mode passes nil for the readline instance
-		if exit := executeCommand(ctx, line, nil); exit {
+		if exit := executeCommand(ctx, line, nil, false); exit {
 			break
 		}
 	}
 }
 
-func executeCommand(ctx context.Context, line string, l *readline.Instance) bool {
+func executeCommand(ctx context.Context, line string, l *readline.Instance, fromPipe bool) bool {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return false
@@ -149,9 +270,13 @@ func executeCommand(ctx context.Context, line string, l *readline.Instance) bool
 	parts := strings.Fields(line)
 	cmd := parts[0]
 
+	var stdout io.Writer = os.Stdout
+	if l != nil {
+		stdout = l.Stdout()
+	}
+
 	switch cmd {
 	case "quit", "exit":
-		fmt.Println("Flushing ledger and exiting...")
 		return true
 	case "clear":
 		fmt.Println("-> Stub: Clearing active chat context")
@@ -163,8 +288,16 @@ func executeCommand(ctx context.Context, line string, l *readline.Instance) bool
 		handleSet(parts)
 	case "context-include", "inc":
 		handleContextInclude(ctx, parts)
-	case "git-add-repo", "gr":
+	case "git-add-repo":
 		handleGitAddRepo(parts)
+	case "gr", "git-remote":
+		if len(parts) >= 2 && (parts[1] == "push" || parts[1] == "pull" || parts[1] == "clone") {
+			handleGitRemote(parts)
+		} else if cmd == "gr" {
+			handleGitAddRepo(parts)
+		} else {
+			fmt.Println("Usage: git-remote <push|pull|clone> [project]")
+		}
 	case "cc":
 		handleCC(parts)
 	case "p":
@@ -192,8 +325,7 @@ func executeCommand(ctx context.Context, line string, l *readline.Instance) bool
 	case "gs":
 		handleGS(parts)
 	default:
-		// Unrecognized command becomes a single-line chat prompt
-		sendAndRender(ctx, line)
+		sendAndRender(ctx, line, fromPipe, stdout)
 	}
 	return false
 }

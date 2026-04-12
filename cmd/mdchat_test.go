@@ -52,7 +52,7 @@ func TestChatRecordLifecycle(t *testing.T) {
 
 	// 5. Phase 1: Action (Simulate the REPL processing a prompt)
 	// This triggers sendAndRender which should write to BOTH local ledger and global sources
-	sendAndRender(context.Background(), expectedPrompt)
+	sendAndRender(context.Background(), expectedPrompt, false, os.Stdout)
 
 	// 6. Phase 1: Verification
 	// Walk the mocked Global.SourceDir to verify the file actually landed there

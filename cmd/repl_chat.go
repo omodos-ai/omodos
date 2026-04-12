@@ -63,7 +63,9 @@ func handleP(ctx context.Context, l *readline.Instance) {
 			break
 		}
 		if prompt != "" {
-			sendAndRender(ctx, prompt)
+			// Because we are explicitly interacting via the REPL multi-line prompt,
+			// fromPipe is always false here.
+			sendAndRender(ctx, prompt, false, l.Stdout())
 		}
 	}
 	fmt.Println("\033[35m=== Exited Chat Mode ===\033[0m")
@@ -78,7 +80,7 @@ func handlePS(ctx context.Context, l *readline.Instance) {
 	prompt, ok := readMultiLine(l, "(Enter prompt to prepend to clipboard. Ctrl-D to send, Ctrl-C to cancel)")
 	if ok && (prompt != "" || clip != "") {
 		finalPrompt := prompt + "\n\n" + clip
-		sendAndRender(ctx, finalPrompt)
+		sendAndRender(ctx, finalPrompt, false, l.Stdout())
 	}
 }
 
@@ -264,17 +266,33 @@ func DispatchPrompt(ctx context.Context, prompt string, source string) (string, 
 	return cleanResp, nil
 }
 
-// sendAndRender is the CLI-specific wrapper that prints to standard out.
-func sendAndRender(ctx context.Context, prompt string) {
-	fmt.Printf("\033[90mThinking...\033[0m\n\n")
+// sendAndRender is the CLI-specific wrapper that broadcasts to all subscribers
+func sendAndRender(ctx context.Context, prompt string, fromPipe bool, stdout io.Writer) {
+	fmt.Fprintf(stdout, "\033[90mThinking...\033[0m\n\n")
 
-	response, err := DispatchPrompt(ctx, prompt, "ggo-cli")
+	source := "ggo-cli"
+	if fromPipe {
+		source = "ggo-emacs-pipe"
+	}
+
+	// 1. Dispatch writes to the Disk Ledger internally
+	response, err := DispatchPrompt(ctx, prompt, source)
 	if err != nil {
-		fmt.Printf("\033[31m[API Error]\033[0m %v\n", err)
+		fmt.Fprintf(stdout, "\033[31m[API Error]\033[0m %v\n", err)
+		if ResponsePipe != nil {
+			ResponsePipe.WriteString(fmt.Sprintf("[API Error] %v\n", err))
+		}
 		return
 	}
-	fmt.Println(response)
-	fmt.Println()
+
+	// 2. Broadcast to Terminal
+	fmt.Fprintln(stdout, response)
+	fmt.Fprintln(stdout)
+
+	// 3. Broadcast to Emacs Pipe
+	if ResponsePipe != nil {
+		ResponsePipe.WriteString(response + "\n")
+	}
 }
 
 func autoCopyToClipboard(response string) {

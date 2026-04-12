@@ -94,7 +94,7 @@ func TestLiveAutoCopyToClipboard(t *testing.T) {
 		"Do not combine them into one block. Give each its own markdown code block."
 
 	// Send it. This explicitly hits the Gemini API and triggers autoCopyToClipboard
-	sendAndRender(ctx, prompt)
+	sendAndRender(ctx, prompt, false, os.Stdout)
 
 	// 4. Verification
 	actualClip, err := clipboard.ReadAll()

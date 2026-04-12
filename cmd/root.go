@@ -69,7 +69,6 @@ model_name: "gemini-2.5-pro"
 				Global.Projects[defaultName] = cwd
 				GlobalViper.Set("projects", Global.Projects)
 
-				// Set this immediately so the subsequent InitConfig catches it
 				GlobalViper.Set("last_project", defaultName)
 
 				if err := GlobalViper.WriteConfigAs(filepath.Join(home, ".ggo", "config.yaml")); err != nil {
@@ -77,7 +76,7 @@ model_name: "gemini-2.5-pro"
 				}
 
 				initGitLFS(projDir)
-				InitConfig() // Re-run to establish state
+				InitConfig()
 
 				fmt.Printf("[Info] Project initialized. Waiting for 'inc <path>' to enroll repositories.\n")
 
@@ -96,6 +95,7 @@ model_name: "gemini-2.5-pro"
 			}
 		}
 
+		// Simply start the unified REPL. No more autoStartDaemon()!
 		RunREPL()
 	},
 }
@@ -126,6 +126,5 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(InitConfig)
-	// Bind the -n / --new flag to the ForceNew variable
 	rootCmd.PersistentFlags().BoolVarP(&ForceNew, "new", "n", false, "Start a new project or force path-based resolution")
 }
