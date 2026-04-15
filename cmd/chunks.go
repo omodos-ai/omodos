@@ -33,8 +33,9 @@ var chunksCmd = &cobra.Command{
 			fmt.Printf("[Info] export_date not set, defaulting chunk directory to %s\n", exportDate)
 		}
 
-		geminiExport := filepath.Join(ingestDir, "gemini")
-		chatgptExport := filepath.Join(ingestDir, "chatgpt")
+		geminiExport := filepath.Join(ingestDir, "gemini", exportDate+"-export")
+		chatgptExport := filepath.Join(ingestDir, "chatgpt", exportDate+"-export")
+		
 		finalChunksDir := filepath.Join(chunksDir, exportDate)
 
 		fmt.Println("\n=======================================================")
