@@ -42,7 +42,7 @@ func TestModelParameterTuning(t *testing.T) {
 	handleSet([]string{"set", "temperature", "0.85"})
 	handleSet([]string{"set", "top_p", "0.65"})
 	handleSet([]string{"set", "safety_level", "low"})
-	
+
 	// Print the params table
 	handleShowParams()
 

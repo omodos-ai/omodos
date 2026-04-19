@@ -391,19 +391,25 @@ func handleShow(parts []string) {
 
 func handleShowParams() {
 	fmt.Println("\n--- Model Tuning Parameters ---")
-	
+
 	temp := 0.2
-	if ProjectViper.IsSet("temperature") { temp = ProjectViper.GetFloat64("temperature") }
+	if ProjectViper.IsSet("temperature") {
+		temp = ProjectViper.GetFloat64("temperature")
+	}
 	fmt.Printf("%-15s: %.2f  (0.0 = Strict/Coding, 2.0 = Brainstorming)\n", "Temperature", temp)
-	
+
 	topP := 0.95
-	if ProjectViper.IsSet("top_p") { topP = ProjectViper.GetFloat64("top_p") }
+	if ProjectViper.IsSet("top_p") {
+		topP = ProjectViper.GetFloat64("top_p")
+	}
 	fmt.Printf("%-15s: %.2f  (0.0 to 1.0, restricts vocabulary choices)\n", "TopP", topP)
-	
+
 	safety := "default"
-	if ProjectViper.IsSet("safety_level") { safety = ProjectViper.GetString("safety_level") }
+	if ProjectViper.IsSet("safety_level") {
+		safety = ProjectViper.GetString("safety_level")
+	}
 	fmt.Printf("%-15s: %s  (none, low, default, high)\n", "Safety Level", safety)
-	
+
 	fmt.Println("\nUse 'set <parameter> <value>' to change these.")
 	fmt.Println("-------------------------------")
 }
@@ -413,11 +419,11 @@ func handleAddRole(parts []string) {
 		fmt.Println("Usage: add role <name> <description_string_or_filepath.md>")
 		return
 	}
-	
+
 	roleName := parts[2]
 	descOrFile := strings.Join(parts[3:], " ")
 	expanded := expandTilde(descOrFile)
-	
+
 	var roleContent []byte
 	if info, err := os.Stat(expanded); err == nil && !info.IsDir() {
 		roleContent, err = os.ReadFile(expanded)
@@ -428,31 +434,31 @@ func handleAddRole(parts []string) {
 	} else {
 		roleContent = []byte(descOrFile)
 	}
-	
+
 	home, _ := os.UserHomeDir()
 	projVault := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
 	rolePath := filepath.Join(projVault, fmt.Sprintf("role-%s.md", roleName))
-	
+
 	ExecuteTransaction("add_role_"+roleName, func(anchor string, now time.Time) error {
 		os.MkdirAll(projVault, 0755)
 		err := os.WriteFile(rolePath, roleContent, 0644)
 		if err != nil {
 			return err
 		}
-		
+
 		ProjectViper.Set("role", roleName)
 		ProjectViper.WriteConfigAs(filepath.Join(projVault, "project.yaml"))
 		InitConfig()
 		UpdateChatModel()
 		return nil
 	})
-	
+
 	fmt.Printf("[✓] Created and activated new role: %s\n", roleName)
 }
 
 func handleShowRoles() {
 	fmt.Println("\n--- Available Personas ---")
-	
+
 	activeRole := "developer"
 	if ProjectViper.IsSet("role") {
 		activeRole = ProjectViper.GetString("role")
@@ -460,19 +466,19 @@ func handleShowRoles() {
 
 	home, _ := os.UserHomeDir()
 	projVault := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
-	
+
 	rolesMap := make(map[string]string)
 	for k, v := range DefaultRoles {
 		rolesMap[k] = v
 	}
-	
+
 	// Scan the project vault to surface any dynamically created or edited roles
 	matches, _ := filepath.Glob(filepath.Join(projVault, "role-*.md"))
 	for _, match := range matches {
 		base := filepath.Base(match)
 		name := strings.TrimPrefix(base, "role-")
 		name = strings.TrimSuffix(name, ".md")
-		
+
 		content, err := os.ReadFile(match)
 		if err == nil {
 			rolesMap[name] = strings.TrimSpace(string(content))
@@ -484,14 +490,14 @@ func handleShowRoles() {
 		if name == activeRole {
 			prefix = "\033[32m*\033[0m "
 		}
-		
+
 		truncDesc := strings.ReplaceAll(desc, "\n", " ")
 		if len(truncDesc) > 80 {
 			truncDesc = truncDesc[:77] + "..."
 		}
 		fmt.Printf("%s%-15s: %s\n", prefix, name, truncDesc)
 	}
-	
+
 	fmt.Println("\nUse 'set role <name>' to switch personas.")
 	fmt.Println("Use 'add role <name> <desc_or_file.md>' to dynamically create a new one.")
 	fmt.Println("--------------------------")
@@ -594,7 +600,7 @@ func handleSet(parts []string) {
 			home, _ := os.UserHomeDir()
 			ProjectViper.WriteConfigAs(filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "project.yaml"))
 			InitConfig()
-			
+
 			if field == "model_name" || field == "temperature" || field == "top_p" || field == "safety_level" || field == "role" {
 				UpdateChatModel()
 			}

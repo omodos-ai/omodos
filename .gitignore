@@ -18,5 +18,7 @@ build
 /docs/.obsidian/
 *.log
 /.ggo/
+/pb/
+/test-data/
 
 

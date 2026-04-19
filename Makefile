@@ -1,7 +1,12 @@
-.PHONY: all build install chunks clean test tidy fmt vet
+.PHONY: all build install chunks clean test tidy fmt vet proto
 
 # 'all' now runs the complete hygiene and test pipeline before building
-all: tidy fmt vet build
+all: tidy fmt vet proto build
+
+proto:
+	@echo "Compiling Protobuf schemas..."
+	protoc --go_out=. --go_opt=module=github.com/peterjbraam/ggo \
+		-I proto proto/ggo/schema/v1/record.proto
 
 tidy:
 	@echo "Tidying module dependencies..."
@@ -19,7 +24,7 @@ test:
 	@echo "Running test suite..."
 	go test -v ./...
 
-build:
+build: proto
 	@echo "Building ggo..."
 	go build -o bin/ggo main.go
 
@@ -29,4 +34,4 @@ install: build
 
 clean:
 	@echo "Cleaning build directory..."
-	rm -rf bin/
+	rm -rf bin/ pb/

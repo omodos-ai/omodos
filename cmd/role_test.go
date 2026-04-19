@@ -52,7 +52,7 @@ func TestRolePersonaEngine(t *testing.T) {
 	if !strings.Contains(output, "Updated: role = math") {
 		t.Errorf("Failed to confirm role update. Output:\n%s", output)
 	}
-	
+
 	// The custom role should have been scanned from disk and added to the UI
 	if !strings.Contains(output, "hacker") || !strings.Contains(output, "cyber security") {
 		t.Errorf("'show roles' table missing the dynamically added 'hacker' role. Output:\n%s", output)

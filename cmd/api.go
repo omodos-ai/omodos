@@ -132,7 +132,7 @@ func UpdateChatModel() {
 
 	home, _ := os.UserHomeDir()
 	projVault := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
-	
+
 	rulesPath := filepath.Join(projVault, "RULES.md")
 	rulesBytes, err := os.ReadFile(rulesPath)
 	if os.IsNotExist(err) {
@@ -198,7 +198,7 @@ func UpdateChatModel() {
 	}
 
 	sysPromptString := sysPromptBuilder.String()
-	
+
 	temp := 0.2
 	if ProjectViper.IsSet("temperature") {
 		temp = ProjectViper.GetFloat64("temperature")
@@ -263,13 +263,13 @@ func UpdateChatModel() {
 					Parts: []*genai.Part{{Text: sysPromptString}},
 				},
 			}
-			
+
 			cache, err := aiClient.Caches.Create(ctx, modelName, cacheReq)
 			if err == nil && cache != nil {
 				ProjectViper.Set("gemini_cache_name", cache.Name)
 				ProjectViper.Set("gemini_cache_hash", currentHash)
 				ProjectViper.WriteConfigAs(filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "project.yaml"))
-				
+
 				cachedName = cache.Name
 				useCache = true
 				fmt.Printf("\n\033[90m[Info] Created new 1-Hour Gemini Context Cache: %s\033[0m\n", cache.Name)
@@ -378,4 +378,104 @@ var SendPrompt = func(ctx context.Context, prompt string) (string, error) {
 	return resp.Text(), nil
 }
 
-// ... FetchAndListModels remains identical ...
+func FetchAndListModels(ctx context.Context) {
+	if aiClient == nil {
+		fmt.Println("[Error] Gemini API not initialized.")
+		return
+	}
+
+	fmt.Println("Fetching available models...")
+
+	resp, err := aiClient.Models.List(ctx, nil)
+	if err != nil {
+		fmt.Printf("[Error] Failed to fetch models: %v\n", err)
+		return
+	}
+
+	View.ModelList = []string{}
+
+	val := reflect.ValueOf(resp)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+
+	extractNames := func(v reflect.Value) {
+		if v.Kind() == reflect.Slice {
+			for i := 0; i < v.Len(); i++ {
+				m := v.Index(i)
+				if m.Kind() == reflect.Ptr {
+					m = m.Elem()
+				}
+				if m.Kind() == reflect.Struct {
+					nameField := m.FieldByName("Name")
+					if nameField.IsValid() && nameField.Kind() == reflect.String {
+						name := strings.TrimPrefix(nameField.String(), "models/")
+						View.ModelList = append(View.ModelList, name)
+					}
+				}
+			}
+		}
+	}
+
+	if val.Kind() == reflect.Slice {
+		extractNames(val)
+	} else if val.Kind() == reflect.Struct {
+		found := false
+		for _, fName := range []string{"Models", "Items", "Page"} {
+			f := val.FieldByName(fName)
+			if f.IsValid() && f.Kind() == reflect.Slice {
+				extractNames(f)
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			nextMethod := reflect.ValueOf(resp).MethodByName("Next")
+			if nextMethod.IsValid() {
+				for {
+					res := nextMethod.Call(nil)
+					if len(res) >= 1 {
+						m := res[0]
+						if len(res) == 2 && !res[1].IsNil() {
+							break
+						}
+						if m.Kind() == reflect.Ptr {
+							m = m.Elem()
+						}
+						if m.Kind() == reflect.Struct {
+							nameField := m.FieldByName("Name")
+							if nameField.IsValid() && nameField.Kind() == reflect.String {
+								name := strings.TrimPrefix(nameField.String(), "models/")
+								View.ModelList = append(View.ModelList, name)
+							}
+						} else {
+							break
+						}
+					} else {
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if len(View.ModelList) == 0 {
+		View.ModelList = []string{"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-pro-exp"}
+	}
+
+	fmt.Println("\n--- Available Gemini Models ---")
+	activeModel := "gemini-2.5-pro"
+	if ProjectViper.IsSet("model_name") {
+		activeModel = ProjectViper.GetString("model_name")
+	}
+
+	for idx, m := range View.ModelList {
+		if m == activeModel {
+			fmt.Printf("[\033[32m%d\033[0m] \033[36m%s\033[0m (Active)\n", idx+1, m)
+		} else {
+			fmt.Printf("[\033[32m%d\033[0m] %s\n", idx+1, m)
+		}
+	}
+	fmt.Println()
+}

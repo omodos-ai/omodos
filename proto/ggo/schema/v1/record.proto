@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package ggo.schema.v1;
+
+// This tells the protoc compiler where to place the generated Go code
+option go_package = "github.com/peterjbraam/ggo/pb/v1;pb";
+
+// The root record for a single conversational turn
+message AiRecord {
+  int32 version = 1; // Currently v1
+  Metadata metadata = 2;
+  SystemState state = 3;
+  UserInput input = 4;
+  AIResponse output = 5;
+}
+
+message Metadata {
+  string timestamp_utc = 1;      // ISO 8601 (e.g., "2026-04-19T15:04:05Z")
+  string chat_id = 2;            // Thread isolation
+  string model_name = 3;         
+  string transaction_anchor = 4; // Git Time Machine provenance tag
+  TokenUsage usage = 5;
+  
+  // Future-proofing for TSP / Agentic Chaining
+  string agent_invocation_id = 6; 
+  string parent_chain_id = 7;
+}
+
+message TokenUsage {
+  int32 input_tokens = 1;
+  int32 output_tokens = 2;
+  double estimated_cost_usd = 3;
+}
+
+message SystemState {
+  string active_role = 1;             // The behavioral persona
+  repeated string included_paths = 2; // Layer 1: Persistent baseline (/inc)
+}
+
+message UserInput {
+  string narrative = 1;                // The core conceptual prompt
+  repeated Snippet snippets = 2;       // User-provided logs/code bounds (/snip)
+  repeated Attachment attachments = 3; // Layer 3: Ephemeral Vision (/attach)
+  repeated FileDiff jit_context = 4;   // Layer 2: Auto-detected working memory
+}
+
+message Attachment {
+  string file_name = 1;
+  string mime_type = 2;
+  string local_vault_path = 3; // Immutable path to the file in .ggo/attachments/
+}
+
+message AIResponse {
+  string narrative = 1;              // Conceptual synthesis
+  repeated Snippet snippets = 2;     // LLM-generated code blocks
+  repeated FileDiff macro_edits = 3; // LLM-generated XML <file> mutations
+}
+
+message Snippet {
+  string language = 1;
+  string content = 2;
+}
+
+message FileDiff {
+  string path = 1;
+  string content = 2;
+}

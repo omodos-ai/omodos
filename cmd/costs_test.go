@@ -47,22 +47,22 @@ func TestHandleShowCosts_ValidData(t *testing.T) {
 	if !strings.Contains(output, "TOTAL") {
 		t.Fatalf("Expected 'TOTAL' row in output, got:\n%s", output)
 	}
-	
+
 	// Input: 1000 + 2000 = 3000
 	if !strings.Contains(output, "3000") {
 		t.Errorf("Failed to sum Input Tokens correctly. Expected 3000, got:\n%s", output)
 	}
-	
+
 	// Output: 500 + 1000 = 1500
 	if !strings.Contains(output, "1500") {
 		t.Errorf("Failed to sum Output Tokens correctly. Expected 1500, got:\n%s", output)
 	}
-	
+
 	// Total Tokens: 1500 + 3000 = 4500
 	if !strings.Contains(output, "4500") {
 		t.Errorf("Failed to sum Total Tokens correctly. Expected 4500, got:\n%s", output)
 	}
-	
+
 	// USD Cost: 0.003750 + 0.007500 = 0.011250
 	if !strings.Contains(output, "0.011250") {
 		t.Errorf("Failed to calculate USD Cost correctly. Expected $0.011250, got:\n%s", output)
