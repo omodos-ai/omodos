@@ -20,7 +20,7 @@ var lastAPIResponse string
 var ResponsePipe *os.File
 
 type InputEvent struct {
-	Source  string // "terminal", "prompt_pipe", "control_pipe"
+	Source  string
 	Payload string
 }
 
@@ -49,7 +49,6 @@ func setupPipes() {
 		}
 	}
 
-	// Open Response Pipe as O_RDWR so it never blocks/closes on the writer side when Emacs disconnects
 	var err error
 	ResponsePipe, err = os.OpenFile(pipes[2], os.O_RDWR, os.ModeNamedPipe)
 	if err != nil {
@@ -123,9 +122,14 @@ func RunREPL() {
 		readline.PcItem("exit"),
 		readline.PcItem("clear"),
 		readline.PcItem("list", readline.PcItem("projects"), readline.PcItem("models")),
-		readline.PcItem("show", readline.PcItem("global"), readline.PcItem("project")),
+		readline.PcItem("show", readline.PcItem("global"), readline.PcItem("project"), readline.PcItem("costs"), readline.PcItem("params"), readline.PcItem("roles")),
+		readline.PcItem("add", readline.PcItem("role")),
 		readline.PcItem("set",
 			readline.PcItem("model"),
+			readline.PcItem("role", readline.PcItem("developer"), readline.PcItem("architect"), readline.PcItem("challenger"), readline.PcItem("writer"), readline.PcItem("math")),
+			readline.PcItem("temperature"),
+			readline.PcItem("top_p"),
+			readline.PcItem("safety_level"),
 			readline.PcItem("source_dir", readline.PcItemDynamic(listFiles)),
 			readline.PcItem("chunks_dir", readline.PcItemDynamic(listFiles)),
 			readline.PcItem("ingest_dir", readline.PcItemDynamic(listFiles)),
@@ -179,17 +183,13 @@ func RunREPL() {
 		fmt.Printf("[OK]\n")
 	}
 
-	// 1. Initialize IPC
 	setupPipes()
 
-	// 2. Create the Central Event Bus
 	eventChan := make(chan InputEvent)
 
-	// 3. Start Pipe Listeners
 	go listenPromptPipe(eventChan)
 	go listenControlPipe(eventChan)
 
-	// 4. Start Terminal Listener
 	go func() {
 		for {
 			line, err := l.Readline()
@@ -209,7 +209,6 @@ func RunREPL() {
 
 	fmt.Printf("Welcome to ggo [%s]. Unified Hub Active. Type 'quit' to exit.\n", Project.ProjectName)
 
-	// 5. The Central State Machine (Multiplexer)
 	for event := range eventChan {
 		if event.Payload == "quit" || event.Payload == "exit" {
 			fmt.Println("Flushing ledger and exiting...")
@@ -282,8 +281,22 @@ func executeCommand(ctx context.Context, line string, l *readline.Instance, from
 		fmt.Println("-> Stub: Clearing active chat context")
 	case "list":
 		handleList(ctx, parts)
+	case "add":
+		if len(parts) > 1 && parts[1] == "role" {
+			handleAddRole(parts)
+		} else {
+			fmt.Println("Usage: add role <name> <description_string_or_filepath.md>")
+		}
 	case "show":
-		handleShow(parts)
+		if len(parts) > 1 && parts[1] == "costs" {
+			handleShowCosts()
+		} else if len(parts) > 1 && parts[1] == "params" {
+			handleShowParams()
+		} else if len(parts) > 1 && parts[1] == "roles" {
+			handleShowRoles()
+		} else {
+			handleShow(parts)
+		}
 	case "set":
 		handleSet(parts)
 	case "context-include", "inc":
@@ -355,7 +368,7 @@ func handleList(ctx context.Context, parts []string) {
 
 func handleShow(parts []string) {
 	if len(parts) < 2 {
-		fmt.Println("Usage: show <global|project>")
+		fmt.Println("Usage: show <global|project|costs|params|roles>")
 		return
 	}
 	target := parts[1]
@@ -372,8 +385,165 @@ func handleShow(parts []string) {
 		}
 		fmt.Println()
 	} else {
-		fmt.Println("Unknown show target. Use 'global' or 'project'.")
+		fmt.Println("Unknown show target. Use 'global', 'project', 'costs', 'params', or 'roles'.")
 	}
+}
+
+func handleShowParams() {
+	fmt.Println("\n--- Model Tuning Parameters ---")
+	
+	temp := 0.2
+	if ProjectViper.IsSet("temperature") { temp = ProjectViper.GetFloat64("temperature") }
+	fmt.Printf("%-15s: %.2f  (0.0 = Strict/Coding, 2.0 = Brainstorming)\n", "Temperature", temp)
+	
+	topP := 0.95
+	if ProjectViper.IsSet("top_p") { topP = ProjectViper.GetFloat64("top_p") }
+	fmt.Printf("%-15s: %.2f  (0.0 to 1.0, restricts vocabulary choices)\n", "TopP", topP)
+	
+	safety := "default"
+	if ProjectViper.IsSet("safety_level") { safety = ProjectViper.GetString("safety_level") }
+	fmt.Printf("%-15s: %s  (none, low, default, high)\n", "Safety Level", safety)
+	
+	fmt.Println("\nUse 'set <parameter> <value>' to change these.")
+	fmt.Println("-------------------------------")
+}
+
+func handleAddRole(parts []string) {
+	if len(parts) < 4 || parts[1] != "role" {
+		fmt.Println("Usage: add role <name> <description_string_or_filepath.md>")
+		return
+	}
+	
+	roleName := parts[2]
+	descOrFile := strings.Join(parts[3:], " ")
+	expanded := expandTilde(descOrFile)
+	
+	var roleContent []byte
+	if info, err := os.Stat(expanded); err == nil && !info.IsDir() {
+		roleContent, err = os.ReadFile(expanded)
+		if err != nil {
+			fmt.Printf("[Error] Could not read file %s: %v\n", expanded, err)
+			return
+		}
+	} else {
+		roleContent = []byte(descOrFile)
+	}
+	
+	home, _ := os.UserHomeDir()
+	projVault := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
+	rolePath := filepath.Join(projVault, fmt.Sprintf("role-%s.md", roleName))
+	
+	ExecuteTransaction("add_role_"+roleName, func(anchor string, now time.Time) error {
+		os.MkdirAll(projVault, 0755)
+		err := os.WriteFile(rolePath, roleContent, 0644)
+		if err != nil {
+			return err
+		}
+		
+		ProjectViper.Set("role", roleName)
+		ProjectViper.WriteConfigAs(filepath.Join(projVault, "project.yaml"))
+		InitConfig()
+		UpdateChatModel()
+		return nil
+	})
+	
+	fmt.Printf("[✓] Created and activated new role: %s\n", roleName)
+}
+
+func handleShowRoles() {
+	fmt.Println("\n--- Available Personas ---")
+	
+	activeRole := "developer"
+	if ProjectViper.IsSet("role") {
+		activeRole = ProjectViper.GetString("role")
+	}
+
+	home, _ := os.UserHomeDir()
+	projVault := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
+	
+	rolesMap := make(map[string]string)
+	for k, v := range DefaultRoles {
+		rolesMap[k] = v
+	}
+	
+	// Scan the project vault to surface any dynamically created or edited roles
+	matches, _ := filepath.Glob(filepath.Join(projVault, "role-*.md"))
+	for _, match := range matches {
+		base := filepath.Base(match)
+		name := strings.TrimPrefix(base, "role-")
+		name = strings.TrimSuffix(name, ".md")
+		
+		content, err := os.ReadFile(match)
+		if err == nil {
+			rolesMap[name] = strings.TrimSpace(string(content))
+		}
+	}
+
+	for name, desc := range rolesMap {
+		prefix := "  "
+		if name == activeRole {
+			prefix = "\033[32m*\033[0m "
+		}
+		
+		truncDesc := strings.ReplaceAll(desc, "\n", " ")
+		if len(truncDesc) > 80 {
+			truncDesc = truncDesc[:77] + "..."
+		}
+		fmt.Printf("%s%-15s: %s\n", prefix, name, truncDesc)
+	}
+	
+	fmt.Println("\nUse 'set role <name>' to switch personas.")
+	fmt.Println("Use 'add role <name> <desc_or_file.md>' to dynamically create a new one.")
+	fmt.Println("--------------------------")
+}
+
+func handleShowCosts() {
+	home, _ := os.UserHomeDir()
+	logPath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "cost.csv")
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		fmt.Println("[Info] No cost data recorded yet for this project.")
+		return
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) <= 1 {
+		fmt.Println("[Info] No cost data recorded yet.")
+		return
+	}
+
+	var totalIn, totalOut, totalTokens int
+	var totalCost float64
+
+	fmt.Println("\n--- Project Cost Summary ---")
+	fmt.Printf("%-25s %-12s %-12s %-12s %-15s\n", "Date (UTC)", "Input", "Output", "Total", "Est. Cost (USD)")
+	fmt.Println(strings.Repeat("-", 80))
+
+	for i := 1; i < len(lines); i++ {
+		cols := strings.Split(lines[i], ",")
+		if len(cols) < 6 {
+			continue
+		}
+
+		inTok, _ := strconv.Atoi(cols[2])
+		outTok, _ := strconv.Atoi(cols[3])
+		totTok, _ := strconv.Atoi(cols[4])
+		costStr := strings.TrimPrefix(cols[5], "$")
+		cost, _ := strconv.ParseFloat(costStr, 64)
+
+		totalIn += inTok
+		totalOut += outTok
+		totalTokens += totTok
+		totalCost += cost
+
+		if i >= len(lines)-5 {
+			fmt.Printf("%-25s %-12d %-12d %-12d $%.6f\n", cols[0], inTok, outTok, totTok, cost)
+		}
+	}
+
+	fmt.Println(strings.Repeat("-", 80))
+	fmt.Printf("\033[32m%-25s %-12d %-12d %-12d $%.6f\033[0m\n\n", "TOTAL", totalIn, totalOut, totalTokens, totalCost)
 }
 
 func handleSet(parts []string) {
@@ -400,26 +570,38 @@ func handleSet(parts []string) {
 		value = expandTilde(value)
 	}
 
+	var finalValue interface{} = value
+
+	if field == "temperature" || field == "top_p" {
+		if vFloat, err := strconv.ParseFloat(value, 64); err == nil {
+			finalValue = vFloat
+		} else {
+			fmt.Printf("[Error] %s must be a numeric value.\n", field)
+			return
+		}
+	}
+
 	isGlobal := GlobalViper.IsSet(field) || field == "export_date" || field == "source_dir" || field == "chunks_dir" || field == "ingest_dir"
-	isProject := ProjectViper.IsSet(field) || field == "project_name" || field == "shell_cmd" || field == "diff_cmd" || field == "model_name"
+	isProject := ProjectViper.IsSet(field) || field == "project_name" || field == "shell_cmd" || field == "diff_cmd" || field == "model_name" || field == "temperature" || field == "top_p" || field == "safety_level" || field == "role"
 
 	ExecuteTransaction("set_"+field, func(anchor string, now time.Time) error {
 		if isGlobal {
-			GlobalViper.Set(field, value)
+			GlobalViper.Set(field, finalValue)
 			GlobalViper.WriteConfig()
 			InitConfig()
 		} else if isProject {
-			ProjectViper.Set(field, value)
+			ProjectViper.Set(field, finalValue)
 			home, _ := os.UserHomeDir()
 			ProjectViper.WriteConfigAs(filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "project.yaml"))
 			InitConfig()
-			if field == "model_name" {
+			
+			if field == "model_name" || field == "temperature" || field == "top_p" || field == "safety_level" || field == "role" {
 				UpdateChatModel()
 			}
 		}
 		return nil
 	})
-	fmt.Printf("[✓] Updated: %s = %s\n", field, value)
+	fmt.Printf("[✓] Updated: %s = %v\n", field, finalValue)
 }
 
 func expandTilde(path string) string {

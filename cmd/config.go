@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-var ForceNew bool // Bound to the -n / --new flag in root.go
+var ForceNew bool
 
 type GlobalConfig struct {
 	SourceDir   string            `mapstructure:"source_dir"`
@@ -17,7 +17,7 @@ type GlobalConfig struct {
 	IngestDir   string            `mapstructure:"ingest_dir"`
 	ExportDate  string            `mapstructure:"export_date"`
 	Projects    map[string]string `mapstructure:"projects"`
-	LastProject string            `mapstructure:"last_project"` // Tracks the last active project
+	LastProject string            `mapstructure:"last_project"`
 }
 
 type ProjectConfig struct {
@@ -26,6 +26,9 @@ type ProjectConfig struct {
 	CodeDirs     []string `mapstructure:"code_dirs"`
 	IncludedData []string `mapstructure:"included_data"`
 	ModelName    string   `mapstructure:"model_name"`
+	Temperature  float64  `mapstructure:"temperature"`
+	TopP         float64  `mapstructure:"top_p"`
+	SafetyLevel  string   `mapstructure:"safety_level"`
 }
 
 var (
@@ -53,16 +56,13 @@ func InitConfig() {
 	var activeProject string
 	var longestMatch int
 
-	// 1. FAST RESUME: If we have a last project and the user didn't request a --new session
 	if !ForceNew && Global.LastProject != "" && Global.Projects != nil {
 		if path, exists := Global.Projects[Global.LastProject]; exists {
 			activeProject = Global.LastProject
-			// Teleport the user's working directory back to the project root
 			os.Chdir(path)
 		}
 	}
 
-	// 2. PATH RESOLUTION: If --new was passed, or no last project exists, resolve via CWD
 	if activeProject == "" && Global.Projects != nil {
 		for name, path := range Global.Projects {
 			if strings.HasPrefix(cwd, path) {
@@ -75,7 +75,6 @@ func InitConfig() {
 	}
 
 	if activeProject != "" {
-		// Persist the active project as the new LastProject
 		Global.LastProject = activeProject
 		GlobalViper.Set("last_project", activeProject)
 		GlobalViper.WriteConfigAs(filepath.Join(home, ".ggo", "config.yaml"))

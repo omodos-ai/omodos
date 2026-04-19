@@ -35,7 +35,7 @@ var chunksCmd = &cobra.Command{
 
 		geminiExport := filepath.Join(ingestDir, "gemini", exportDate+"-export")
 		chatgptExport := filepath.Join(ingestDir, "chatgpt", exportDate+"-export")
-		
+
 		finalChunksDir := filepath.Join(chunksDir, exportDate)
 
 		fmt.Println("\n=======================================================")
