@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/peterjbraam/ggo/pb/v1"
 )
 
 type GeminiRecord struct {
@@ -45,16 +47,6 @@ func RunGeminiExtract(sourceDir, exportDir string) {
 		return
 	}
 
-	if len(validAttachments) > 0 {
-		idxPath := filepath.Join(sourceDir, "0000_Gemini_Attachments_Index.md")
-		os.MkdirAll(sourceDir, 0755)
-		idxContent := "# Gemini Available Attachments from this Export\n\n"
-		for _, att := range validAttachments {
-			idxContent += fmt.Sprintf("- [Local Path: %s]\n", att)
-		}
-		os.WriteFile(idxPath, []byte(idxContent), 0644)
-	}
-
 	file, _ := os.Open(jsonPath)
 	defer file.Close()
 	bytes, _ := io.ReadAll(file)
@@ -79,7 +71,6 @@ func RunGeminiExtract(sourceDir, exportDir string) {
 			continue
 		}
 
-		// LOCK TO UTC
 		promptTime = promptTime.UTC()
 
 		var responseText string
@@ -103,7 +94,6 @@ func RunGeminiExtract(sourceDir, exportDir string) {
 			re := regexp.MustCompile(`<[^>]*>`)
 			responseText = re.ReplaceAllString(decoded, "")
 			responseText = strings.TrimSpace(responseText)
-
 		} else if rec.Content != "" {
 			responseText = rec.Content
 		} else {
@@ -112,46 +102,37 @@ func RunGeminiExtract(sourceDir, exportDir string) {
 
 		year := fmt.Sprintf("%04d", promptTime.Year())
 		month := fmt.Sprintf("%02d", promptTime.Month())
-		timestamp := promptTime.Format("20060102T150405Z") // Added Z
+		timestamp := promptTime.Format("20060102T150405Z")
 
-		safeSubject := makeSafeFilenameGemini(prompt)
-		if len(safeSubject) > 30 {
-			safeSubject = safeSubject[:30]
-		}
-		if safeSubject == "" {
-			safeSubject = "chat"
-		}
-
-		cleanTitle := strings.ReplaceAll(prompt, "\n", " ")
-		if len(cleanTitle) > 50 {
-			cleanTitle = cleanTitle[:50] + "..."
-		}
-
-		filename := fmt.Sprintf("%s-%s.md", timestamp, safeSubject)
+		safeSubject := MakeSafeSlug(prompt)
+		filename := fmt.Sprintf("%s-%s.json", timestamp, safeSubject)
 		targetPath := filepath.Join(sourceDir, year, month)
-		os.MkdirAll(targetPath, 0755)
 
-		mdContent := "## AI Interaction\n\n"
-		mdContent += "### Date\n"
-		mdContent += fmt.Sprintf("%s\n\n", promptTime.Format(time.RFC3339))
-		mdContent += "### Source\n"
-		mdContent += "Gemini\n\n"
-		mdContent += "### Subject\n"
-		mdContent += fmt.Sprintf("%s\n\n", cleanTitle)
-		mdContent += "### Prompt\n"
-		mdContent += fmt.Sprintf("%s\n\n", prompt)
-		mdContent += "### Response\n"
-		mdContent += fmt.Sprintf("%s\n\n", responseText)
+		record := &pb.AiRecord{
+			Metadata: &pb.Metadata{
+				TimestampUtc: promptTime.Format(time.RFC3339),
+				ChatId:       "gemini-takeout",
+				ModelName:    "gemini-unknown",
+			},
+			Input: &pb.UserInput{
+				Narrative: prompt,
+			},
+			Output: &pb.AIResponse{
+				Narrative: responseText,
+			},
+		}
 
-		os.WriteFile(filepath.Join(targetPath, filename), []byte(mdContent), 0644)
+		// Process legacy attachments if found in the Takeout bundle
+		for _, att := range validAttachments {
+			record.Input.Attachments = append(record.Input.Attachments, &pb.Attachment{
+				FileName:       filepath.Base(att),
+				LocalVaultPath: att,
+			})
+		}
+
+		WriteRecord(targetPath, filename, record)
 		count++
 	}
 
-	fmt.Printf("[✓] Extracted %d Gemini interactions directly to %s/\n", count, sourceDir)
-}
-
-func makeSafeFilenameGemini(str string) string {
-	reg, _ := regexp.Compile("[^a-zA-Z0-9]+")
-	slug := strings.Trim(reg.ReplaceAllString(str, "-"), "-")
-	return strings.ToLower(slug)
+	fmt.Printf("[✓] Extracted %d Gemini interactions to strictly typed JSON in %s/\n", count, sourceDir)
 }

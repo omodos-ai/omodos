@@ -6,9 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/peterjbraam/ggo/pb/v1"
 )
 
 type Conversation struct {
@@ -36,33 +37,17 @@ type Message struct {
 }
 
 func RunChatGPTExtract(sourceDir, exportDir string) {
-	var validAttachments []string
 	var jsonFiles []string
 
 	filepath.Walk(exportDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
-
-		name := info.Name()
-		if strings.HasPrefix(name, "conversations") && strings.HasSuffix(name, ".json") {
+		if strings.HasPrefix(info.Name(), "conversations") && strings.HasSuffix(info.Name(), ".json") {
 			jsonFiles = append(jsonFiles, path)
-		} else if !strings.HasSuffix(name, ".json") && !strings.HasSuffix(name, ".html") {
-			absPath, _ := filepath.Abs(path)
-			validAttachments = append(validAttachments, absPath)
 		}
 		return nil
 	})
-
-	if len(validAttachments) > 0 {
-		idxPath := filepath.Join(sourceDir, "0000_ChatGPT_Attachments_Index.md")
-		os.MkdirAll(sourceDir, 0755)
-		idxContent := "# ChatGPT Available Attachments from this Export\n\n"
-		for _, att := range validAttachments {
-			idxContent += fmt.Sprintf("- [Local Path: %s]\n", att)
-		}
-		os.WriteFile(idxPath, []byte(idxContent), 0644)
-	}
 
 	totalInteractions := 0
 
@@ -109,61 +94,36 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 				}
 
 				if promptTime.IsZero() {
-					// LOCK TO UTC
 					promptTime = time.Unix(int64(conv.CreateTime), 0).UTC()
 				}
 
 				year := fmt.Sprintf("%04d", promptTime.Year())
 				month := fmt.Sprintf("%02d", promptTime.Month())
-				timestamp := promptTime.Format("20060102T150405Z") // Added Z
+				timestamp := promptTime.Format("20060102T150405Z")
 
-				safeSubject := makeSafeFilenameCG(conv.Title)
-				if len(safeSubject) > 30 {
-					safeSubject = safeSubject[:30]
-				}
-				if safeSubject == "" {
-					safeSubject = "chat"
-				}
-
-				cleanTitle := strings.ReplaceAll(conv.Title, "\n", " ")
-
-				filename := fmt.Sprintf("%s-%s.md", timestamp, safeSubject)
+				safeSubject := MakeSafeSlug(conv.Title)
+				filename := fmt.Sprintf("%s-%s.json", timestamp, safeSubject)
 				targetPath := filepath.Join(sourceDir, year, month)
-				os.MkdirAll(targetPath, 0755)
 
-				mdContent := "## AI Interaction\n\n"
-				mdContent += "### Date\n"
-				mdContent += fmt.Sprintf("%s\n\n", promptTime.Format(time.RFC3339))
-				mdContent += "### Source\n"
-				mdContent += "ChatGPT\n\n"
-				mdContent += "### Chat Name\n"
-				mdContent += fmt.Sprintf("%s\n\n", cleanTitle)
-				mdContent += "### Model\n"
-				mdContent += fmt.Sprintf("%s\n\n", currentModel)
-
-				mdContent += "### Prompt\n"
-				if currentPrompt != "" {
-					mdContent += fmt.Sprintf("%s\n\n", currentPrompt)
-				} else {
-					mdContent += "*(No text prompt)*\n\n"
+				record := &pb.AiRecord{
+					Metadata: &pb.Metadata{
+						TimestampUtc: promptTime.Format(time.RFC3339),
+						ChatId:       conv.Title,
+						ModelName:    currentModel,
+					},
+					Input: &pb.UserInput{
+						Narrative: currentPrompt,
+					},
+					Output: &pb.AIResponse{
+						Narrative: strings.Join(currentResponseParts, "\n\n"),
+					},
 				}
 
-				mdContent += "### Response\n"
-				if len(currentResponseParts) > 0 {
-					mdContent += fmt.Sprintf("%s\n\n", strings.Join(currentResponseParts, "\n\n---\n\n"))
-				} else {
-					mdContent += "*(No response text recorded)*\n\n"
+				for _, att := range capturedAttachments {
+					record.Input.Attachments = append(record.Input.Attachments, &pb.Attachment{FileName: att})
 				}
 
-				if len(capturedAttachments) > 0 {
-					mdContent += "### Attachments Used\n"
-					for _, att := range capturedAttachments {
-						mdContent += fmt.Sprintf("- *(Attached file: %s)*\n", att)
-					}
-					mdContent += "\n"
-				}
-
-				os.WriteFile(filepath.Join(targetPath, filename), []byte(mdContent), 0644)
+				WriteRecord(targetPath, filename, record)
 				totalInteractions++
 
 				currentPrompt = ""
@@ -191,31 +151,25 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 						currentModel = m
 					}
 
-					if files, ok := node.Message.Metadata["files"].([]interface{}); ok {
-						for _, f := range files {
-							if fMap, ok := f.(map[string]interface{}); ok {
-								if name, ok := fMap["name"].(string); ok {
-									capturedAttachments = append(capturedAttachments, name)
+					extractAttachments := func(key string) {
+						if files, ok := node.Message.Metadata[key].([]interface{}); ok {
+							for _, f := range files {
+								if fMap, ok := f.(map[string]interface{}); ok {
+									if name, ok := fMap["name"].(string); ok {
+										capturedAttachments = append(capturedAttachments, name)
+									}
 								}
 							}
 						}
 					}
-					if atts, ok := node.Message.Metadata["attachments"].([]interface{}); ok {
-						for _, a := range atts {
-							if aMap, ok := a.(map[string]interface{}); ok {
-								if name, ok := aMap["name"].(string); ok {
-									capturedAttachments = append(capturedAttachments, name)
-								}
-							}
-						}
-					}
+					extractAttachments("files")
+					extractAttachments("attachments")
 				}
 
 				if role == "user" {
 					writePair()
 					currentPrompt = text
 					if node.Message.CreateTime > 0 {
-						// LOCK TO UTC
 						promptTime = time.Unix(int64(node.Message.CreateTime), 0).UTC()
 					}
 				} else if role == "assistant" || role == "tool" {
@@ -228,11 +182,5 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 		}
 	}
 
-	fmt.Printf("[✓] Extracted %d ChatGPT interactions directly to %s/\n", totalInteractions, sourceDir)
-}
-
-func makeSafeFilenameCG(str string) string {
-	reg, _ := regexp.Compile("[^a-zA-Z0-9]+")
-	slug := strings.Trim(reg.ReplaceAllString(str, "-"), "-")
-	return strings.ToLower(slug)
+	fmt.Printf("[✓] Extracted %d ChatGPT interactions to strictly typed JSON in %s/\n", totalInteractions, sourceDir)
 }

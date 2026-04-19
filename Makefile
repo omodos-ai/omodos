@@ -1,7 +1,7 @@
 .PHONY: all build install chunks clean test tidy fmt vet proto
 
 # 'all' now runs the complete hygiene and test pipeline before building
-all: tidy fmt vet proto build
+all: proto tidy fmt vet proto build
 
 proto:
 	@echo "Compiling Protobuf schemas..."

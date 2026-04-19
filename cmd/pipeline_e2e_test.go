@@ -1,0 +1,74 @@
+package cmd
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestKnowledgeManagerPipeline(t *testing.T) {
+	// 1. Establish the hermetic sandbox
+	tempDir := t.TempDir()
+	sourceDir := filepath.Join(tempDir, "sources")
+	ingestDir := filepath.Join(tempDir, "ingest")
+	chunksDir := filepath.Join(tempDir, "chunks")
+
+	Global.SourceDir = sourceDir
+	Global.IngestDir = ingestDir
+	Global.ChunksDir = chunksDir
+	Global.ExportDate = "2026-04-19"
+
+	// 2. Generate Mock Google Takeout
+	geminiDir := filepath.Join(ingestDir, "gemini", "2026-04-19-export")
+	os.MkdirAll(geminiDir, 0755)
+	mockTakeout := `[{"title": "Prompted How do I optimize a RAG pipeline?", "time": "2026-04-19T10:00:00Z", "content": "You should use conceptual projection."}]`
+	os.WriteFile(filepath.Join(geminiDir, "MyActivity.json"), []byte(mockTakeout), 0644)
+
+	// 3. Generate Mock ChatGPT (Safely handling Go backticks)
+	chatgptDir := filepath.Join(ingestDir, "chatgpt", "2026-04-19-export")
+	os.MkdirAll(chatgptDir, 0755)
+
+	ticks := "`" + "`" + "`"
+	mockChatGPT := `[{"title": "Debug Session", "create_time": 1713520800, "current_node": "node2", "mapping": {
+		"node1": {"id": "node1", "message": {"author": {"role": "user"}, "content": {"parts": ["Fix this bug."]}}},
+		"node2": {"id": "node2", "parent": "node1", "message": {"author": {"role": "assistant"}, "content": {"parts": ["Here is the fix:\n` + ticks + `go\nfmt.Println(\"Fixed\")\n` + ticks + `"]}}}
+	}}]`
+	os.WriteFile(filepath.Join(chatgptDir, "conversations.json"), []byte(mockChatGPT), 0644)
+
+	// 4. Action: Run Extractors
+	RunGeminiExtract(sourceDir, geminiDir)
+	RunChatGPTExtract(sourceDir, chatgptDir)
+
+	// 5. Verification: Check JSON creation
+	var jsonFiles []string
+	filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+		if !info.IsDir() && strings.HasSuffix(info.Name(), ".json") {
+			jsonFiles = append(jsonFiles, path)
+		}
+		return nil
+	})
+	if len(jsonFiles) != 2 {
+		t.Fatalf("Expected 2 JSON records, found %d", len(jsonFiles))
+	}
+
+	// 6. Action: Run Chunker (--full)
+	conceptualMode = false
+	fullChunksDir := filepath.Join(chunksDir, "full", "2026-04-19")
+	RunChunker(sourceDir, fullChunksDir)
+
+	fullData, _ := os.ReadFile(filepath.Join(fullChunksDir, "chunk-01.md"))
+	if !strings.Contains(string(fullData), "Here is the fix:") {
+		t.Errorf("Full chunk missing narrative.")
+	}
+
+	// 7. Action: Run Chunker (--conceptual)
+	conceptualMode = true
+	conceptualChunksDir := filepath.Join(chunksDir, "conceptual", "2026-04-19")
+	RunChunker(sourceDir, conceptualChunksDir)
+
+	conceptualData, _ := os.ReadFile(filepath.Join(conceptualChunksDir, "chunk-01.md"))
+	if !strings.Contains(string(conceptualData), "You should use conceptual projection") {
+		t.Errorf("Conceptual chunk missing core narrative.")
+	}
+}
