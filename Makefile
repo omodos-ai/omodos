@@ -6,7 +6,7 @@ all: proto tidy fmt vet proto build
 proto:
 	@echo "Compiling Protobuf schemas..."
 	protoc --go_out=. --go_opt=module=github.com/peterjbraam/ggo \
-		-I proto proto/ggo/schema/v1/record.proto
+		-I proto proto/ggo/schema/v1/*.proto
 
 tidy:
 	@echo "Tidying module dependencies..."

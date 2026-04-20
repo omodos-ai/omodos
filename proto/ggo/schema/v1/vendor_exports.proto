@@ -14,22 +14,33 @@ message GeminiTakeoutExport {
 
 message GeminiActivity {
   string header = 1;
-  string title = 2;               // Usually "Prompted <text>"
-  string time = 3;                // ISO 8601 string
-  repeated string products = 4;
-  repeated string activityControls = 5;
+  string title = 2;
+  string time = 3;
+  string content = 4; // Fallback plain text response
+  repeated string products = 5;
+  repeated string activity_controls = 6 [json_name = "activityControls"];
   
-  // We know this is an array, but we need to see inside it.
-  repeated GeminiSafeHtmlItem safeHtmlItem = 6; 
+  // The actual LLM response is buried here
+  repeated GeminiSafeHtmlItem safe_html_item = 7 [json_name = "safeHtmlItem"];
+  
+  // Attachment mapping (Google scatters files across these three keys)
+  repeated string attached_files = 8 [json_name = "attachedFiles"];
+  string image_file = 9 [json_name = "imageFile"];
+  repeated GeminiSubtitle subtitles = 10;
 }
 
-// STUB: Pending your jq extraction
 message GeminiSafeHtmlItem {
   string html = 1; 
 }
 
+message GeminiSubtitle {
+  string name = 1;
+  string url = 2; 
+}
+
+
 // ==========================================
-// CHATGPT EXPORT SCHEMA (conversations-000.json)
+// CHATGPT EXPORT SCHEMA (conversations.json)
 // ==========================================
 
 message ChatGptExport {
@@ -38,29 +49,36 @@ message ChatGptExport {
 
 message ChatGptConversation {
   string id = 1;
-  string conversation_id = 2;
+  string conversation_id = 2 [json_name = "conversation_id"];
   string title = 3;
-  double create_time = 4;
-  double update_time = 5;
-  string current_node = 6;        
-  string default_model_slug = 7;
-  string memory_scope = 8;
-  bool is_archived = 9;
-  repeated string disabled_tool_ids = 10;
-  repeated string moderation_results = 11;
+  double create_time = 4 [json_name = "create_time"];
+  double update_time = 5 [json_name = "update_time"];
+  string current_node = 6 [json_name = "current_node"];        
+  string default_model_slug = 7 [json_name = "default_model_slug"];
+  string memory_scope = 8 [json_name = "memory_scope"];
+  bool is_archived = 9 [json_name = "is_archived"];
+  repeated string disabled_tool_ids = 10 [json_name = "disabled_tool_ids"];
+  repeated string moderation_results = 11 [json_name = "moderation_results"];
   
-  // We know this is an object (a map), but we need to see the node structure.
   map<string, ChatGptNode> mapping = 12; 
 }
 
-// STUB: Pending your jq extraction
 message ChatGptNode {
   string id = 1;
   string parent = 2;
   ChatGptMessage message = 3; 
 }
 
-// STUB: Pending your jq extraction
 message ChatGptMessage {
-  // We need to see the author, content, and metadata schemas.
+  ChatGptAuthor author = 1;
+  double create_time = 2 [json_name = "create_time"];
+  ChatGptContent content = 3;
+}
+
+message ChatGptAuthor {
+  string role = 1; 
+}
+
+message ChatGptContent {
+  repeated string parts = 1;      
 }

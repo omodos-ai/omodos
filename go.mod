@@ -3,6 +3,7 @@ module github.com/peterjbraam/ggo
 go 1.25.0
 
 require (
+	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/chzyer/readline v1.5.1
 	github.com/google/generative-ai-go v0.20.1
@@ -20,6 +21,8 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/longrunning v0.5.7 // indirect
+	github.com/PuerkitoBio/goquery v1.9.2 // indirect
+	github.com/andybalholm/cascadia v1.3.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect

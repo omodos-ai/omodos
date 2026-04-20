@@ -14,19 +14,16 @@ import (
 
 const MaxWordsPerChunk = 350000
 
-var conceptualMode bool
-
 var chunksCmd = &cobra.Command{
 	Use:   "chunks",
-	Short: "Projects JSON AiRecords into NotebookLM-ready Markdown chunks",
+	Short: "Projects JSON AiRecords into NotebookLM-ready Markdown chunks (Full & Cognitive)",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		sourceDir := Global.SourceDir
 		chunksDir := Global.ChunksDir
-		ingestDir := Global.IngestDir
 
-		if sourceDir == "" || chunksDir == "" || ingestDir == "" {
-			fmt.Println("[Error] Missing global config. Ensure source_dir, chunks_dir, and ingest_dir are set.")
+		if sourceDir == "" || chunksDir == "" {
+			fmt.Println("[Error] Missing global config. Ensure source_dir and chunks_dir are set.")
 			os.Exit(1)
 		}
 
@@ -35,37 +32,29 @@ var chunksCmd = &cobra.Command{
 			exportDate = time.Now().Format("2006-01-02")
 		}
 
-		geminiExport := filepath.Join(ingestDir, "gemini", exportDate+"-export")
-		chatgptExport := filepath.Join(ingestDir, "chatgpt", exportDate+"-export")
+		fullSource := filepath.Join(sourceDir, "ai-records", "full")
+		cogSource := filepath.Join(sourceDir, "ai-records", "cognitive")
 
-		subDir := "full"
-		if conceptualMode {
-			subDir = "conceptual"
-		}
-		finalChunksDir := filepath.Join(chunksDir, subDir, exportDate)
+		fullChunks := filepath.Join(chunksDir, "full", exportDate)
+		cogChunks := filepath.Join(chunksDir, "cognitive", exportDate)
 
 		fmt.Println("\n=======================================================")
-		fmt.Printf(" Running Full Parse & Chunk Pipeline (%s mode)\n", subDir)
+		fmt.Printf(" Running Dual Chunk Pipeline (%s)\n", exportDate)
 		fmt.Println("=======================================================")
 
-		fmt.Println("--- Phase 1: Extracting Legacy Exports to Structured JSON ---")
-		RunGeminiExtract(sourceDir, geminiExport)
-		RunChatGPTExtract(sourceDir, chatgptExport)
+		fmt.Println("\n--- Phase 1: Projecting Full Records ---")
+		RunChunker(fullSource, fullChunks, false)
 
-		fmt.Printf("\n--- Phase 2: Projecting Records to Markdown ---\n")
-		fmt.Printf("Source Vault: %s\n", sourceDir)
-		fmt.Printf("Chunks Dir:   %s\n", finalChunksDir)
-
-		RunChunker(sourceDir, finalChunksDir)
+		fmt.Println("\n--- Phase 2: Projecting Cognitive Records ---")
+		RunChunker(cogSource, cogChunks, true)
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(chunksCmd)
-	chunksCmd.Flags().BoolVarP(&conceptualMode, "conceptual", "c", false, "Omit snippets, code, and diffs. Extract pure intellectual narrative only.")
 }
 
-func RunChunker(sourceDir, outDir string) {
+func RunChunker(sourceDir, outDir string, conceptual bool) {
 	var jsonFiles []string
 	err := filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() && strings.HasSuffix(info.Name(), ".json") {
@@ -79,7 +68,7 @@ func RunChunker(sourceDir, outDir string) {
 	}
 
 	if len(jsonFiles) == 0 {
-		fmt.Println("[!] No JSON records found in", sourceDir)
+		fmt.Printf("[!] No JSON records found in %s\n", sourceDir)
 		return
 	}
 
@@ -96,7 +85,7 @@ func RunChunker(sourceDir, outDir string) {
 			continue
 		}
 
-		md := ProjectToMarkdown(record, conceptualMode)
+		md := ProjectToMarkdown(record, conceptual)
 		words := len(strings.Fields(md))
 
 		if currentWordCount+words > MaxWordsPerChunk && currentWordCount > 0 {
@@ -121,7 +110,6 @@ func RunChunker(sourceDir, outDir string) {
 func ProjectToMarkdown(r *pb.AiRecord, conceptual bool) string {
 	var sb strings.Builder
 
-	// Nil safety checks since Protobuf sub-messages are pointers
 	timestamp := "Unknown"
 	chatId := "Unknown"
 	modelName := "Unknown"
@@ -138,7 +126,6 @@ func ProjectToMarkdown(r *pb.AiRecord, conceptual bool) string {
 	if r.Input != nil {
 		sb.WriteString(r.Input.Narrative + "\n\n")
 
-		// Metadata Explosion Fix: Truncate massive attachment lists
 		if len(r.Input.Attachments) > 0 {
 			var attNames []string
 			for _, a := range r.Input.Attachments {

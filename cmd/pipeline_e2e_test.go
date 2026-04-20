@@ -48,14 +48,15 @@ func TestKnowledgeManagerPipeline(t *testing.T) {
 		}
 		return nil
 	})
-	if len(jsonFiles) != 2 {
-		t.Fatalf("Expected 2 JSON records, found %d", len(jsonFiles))
+	// 1 Gemini + 1 ChatGPT record written to both full and cognitive ledgers = 4 records total
+	if len(jsonFiles) != 4 {
+		t.Fatalf("Expected 4 JSON records (dual written), found %d", len(jsonFiles))
 	}
 
 	// 6. Action: Run Chunker (--full)
-	conceptualMode = false
+	fullSourceDir := filepath.Join(sourceDir, "ai-records", "full")
 	fullChunksDir := filepath.Join(chunksDir, "full", "2026-04-19")
-	RunChunker(sourceDir, fullChunksDir)
+	RunChunker(fullSourceDir, fullChunksDir, false)
 
 	fullData, _ := os.ReadFile(filepath.Join(fullChunksDir, "chunk-01.md"))
 	if !strings.Contains(string(fullData), "Here is the fix:") {
@@ -63,9 +64,9 @@ func TestKnowledgeManagerPipeline(t *testing.T) {
 	}
 
 	// 7. Action: Run Chunker (--conceptual)
-	conceptualMode = true
-	conceptualChunksDir := filepath.Join(chunksDir, "conceptual", "2026-04-19")
-	RunChunker(sourceDir, conceptualChunksDir)
+	cogSourceDir := filepath.Join(sourceDir, "ai-records", "cognitive")
+	conceptualChunksDir := filepath.Join(chunksDir, "cognitive", "2026-04-19")
+	RunChunker(cogSourceDir, conceptualChunksDir, true)
 
 	conceptualData, _ := os.ReadFile(filepath.Join(conceptualChunksDir, "chunk-01.md"))
 	if !strings.Contains(string(conceptualData), "You should use conceptual projection") {
