@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package ggo.schema.v1;
+
+option go_package = "github.com/peterjbraam/ggo/pb/v1;pb";
+
+// ==========================================
+// GEMINI TAKEOUT SCHEMA (MyActivity.json)
+// ==========================================
+
+message GeminiTakeoutExport {
+  repeated GeminiActivity activities = 1; 
+}
+
+message GeminiActivity {
+  string header = 1;
+  string title = 2;               // Usually "Prompted <text>"
+  string time = 3;                // ISO 8601 string
+  repeated string products = 4;
+  repeated string activityControls = 5;
+  
+  // We know this is an array, but we need to see inside it.
+  repeated GeminiSafeHtmlItem safeHtmlItem = 6; 
+}
+
+// STUB: Pending your jq extraction
+message GeminiSafeHtmlItem {
+  string html = 1; 
+}
+
+// ==========================================
+// CHATGPT EXPORT SCHEMA (conversations-000.json)
+// ==========================================
+
+message ChatGptExport {
+  repeated ChatGptConversation conversations = 1;
+}
+
+message ChatGptConversation {
+  string id = 1;
+  string conversation_id = 2;
+  string title = 3;
+  double create_time = 4;
+  double update_time = 5;
+  string current_node = 6;        
+  string default_model_slug = 7;
+  string memory_scope = 8;
+  bool is_archived = 9;
+  repeated string disabled_tool_ids = 10;
+  repeated string moderation_results = 11;
+  
+  // We know this is an object (a map), but we need to see the node structure.
+  map<string, ChatGptNode> mapping = 12; 
+}
+
+// STUB: Pending your jq extraction
+message ChatGptNode {
+  string id = 1;
+  string parent = 2;
+  ChatGptMessage message = 3; 
+}
+
+// STUB: Pending your jq extraction
+message ChatGptMessage {
+  // We need to see the author, content, and metadata schemas.
+}

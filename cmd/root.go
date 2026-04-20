@@ -1,130 +1,74 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
+
+var cfgDirFlag string
 
 var rootCmd = &cobra.Command{
 	Use:   "ggo",
-	Short: "A strict, Unix-style REPL for knowledge engineering",
+	Short: "Omodos AI - Headless Git-aware Unix orchestrator",
+	Long:  `Omodos AI (ggo) manages AI interactions for knowledge management, code generation, and co-authoring with strict data sovereignty.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		cwd, _ := os.Getwd()
-		cwd, _ = filepath.Abs(cwd)
-		defaultName := filepath.Base(cwd)
-		home, _ := os.UserHomeDir()
-
-		needsInit := (Project.ProjectName == "")
-
-		if needsInit {
-			if ForceNew {
-				fmt.Printf("\n[Info] Starting fresh session (-n).")
-			}
-			fmt.Printf("\n[?] This directory is not tracked by ggo.\n")
-			fmt.Printf("Initialize new ggo project tracking here? [Y/n]: ")
-
-			reader := bufio.NewReader(os.Stdin)
-			response, _ := reader.ReadString('\n')
-			response = strings.TrimSpace(strings.ToLower(response))
-
-			if response == "" || response == "y" || response == "yes" {
-
-				fmt.Printf("Project name [\033[36m%s\033[0m]: ", defaultName)
-				nameResp, _ := reader.ReadString('\n')
-				nameResp = strings.TrimSpace(nameResp)
-				if nameResp != "" {
-					defaultName = nameResp
-				}
-
-				projDir := filepath.Join(home, ".ggo", "ggoai-"+defaultName)
-				os.MkdirAll(projDir, 0755)
-				os.MkdirAll(filepath.Join(projDir, "chats", "source"), 0755)
-				os.MkdirAll(filepath.Join(projDir, "includes"), 0755)
-
-				defaultYaml := fmt.Sprintf(`project_name: "%s"
-code_dirs: []
-included_data: []
-shell_cmd: "bash"
-diff_cmd: "emacsclient -c --eval '(ediff-files \"{actual}\" \"{suggestion}\")'"
-model_name: "gemini-2.5-pro"
-`, defaultName)
-
-				centralYamlPath := filepath.Join(projDir, "project.yaml")
-				err := os.WriteFile(centralYamlPath, []byte(defaultYaml), 0644)
-				if err != nil {
-					fmt.Printf("[!] Failed to create project file in central vault: %v\n", err)
-					os.Exit(1)
-				}
-				fmt.Printf("[✓] Created %s\n", centralYamlPath)
-
-				if Global.Projects == nil {
-					Global.Projects = make(map[string]string)
-				}
-				Global.Projects[defaultName] = cwd
-				GlobalViper.Set("projects", Global.Projects)
-
-				GlobalViper.Set("last_project", defaultName)
-
-				if err := GlobalViper.WriteConfigAs(filepath.Join(home, ".ggo", "config.yaml")); err != nil {
-					fmt.Printf("[!] Failed to save global config: %v\n", err)
-				}
-
-				initGitLFS(projDir)
-				InitConfig()
-
-				fmt.Printf("[Info] Project initialized. Waiting for 'inc <path>' to enroll repositories.\n")
-
-			} else {
-				fmt.Println("Skipping project initialization. Exiting.")
-				os.Exit(0)
-			}
-		} else {
-			projDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
-			if _, err := os.Stat(projDir); os.IsNotExist(err) {
-				fmt.Printf("[Info] Restoring missing central vault for project '%s'...\n", Project.ProjectName)
-				os.MkdirAll(projDir, 0755)
-				os.MkdirAll(filepath.Join(projDir, "chats", "source"), 0755)
-				os.MkdirAll(filepath.Join(projDir, "includes"), 0755)
-				initGitLFS(projDir)
-			}
-		}
-
-		// Simply start the unified REPL. No more autoStartDaemon()!
-		RunREPL()
+		// If executed without arguments, default to starting the REPL
+		fmt.Println("Omodos AI initialized. Run 'ggo --help' for commands.")
 	},
 }
 
-func initGitLFS(projDir string) {
-	fmt.Printf("Initializing Git LFS in %s...\n", projDir)
-	cmdInit := exec.Command("git", "init")
-	cmdInit.Dir = projDir
-	if err := cmdInit.Run(); err != nil {
-		fmt.Printf("[Warning] Failed to run 'git init': %v\n", err)
-		return
-	}
-	cmdLFS := exec.Command("git", "lfs", "install")
-	cmdLFS.Dir = projDir
-	if err := cmdLFS.Run(); err != nil {
-		fmt.Printf("[Warning] Failed to run 'git lfs install'. Is Git LFS installed on this machine? (%v)\n", err)
-	} else {
-		fmt.Printf("[✓] Git LFS initialized.\n")
-	}
-}
-
+// Execute adds all child commands to the root command and sets flags appropriately.
 func Execute() {
-	err := rootCmd.Execute()
-	if err != nil {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Println(err)
 		os.Exit(1)
 	}
 }
 
 func init() {
-	cobra.OnInitialize(InitConfig)
-	rootCmd.PersistentFlags().BoolVarP(&ForceNew, "new", "n", false, "Start a new project or force path-based resolution")
+	cobra.OnInitialize(initConfig)
+
+	// Define the --configdir flag globally for all commands
+	rootCmd.PersistentFlags().StringVar(&cfgDirFlag, "configdir", "", "config directory (default is $GGO_CONFIG_DIR or ~/.ggo)")
+
+	// Bind the flag to Viper so it overrides environment variables
+	viper.BindPFlag("configdir", rootCmd.PersistentFlags().Lookup("configdir"))
+}
+
+// initConfig reads in config file and ENV variables if set.
+func initConfig() {
+	// 1. Resolve configuration directory in order of precedence: Flag -> Env -> Default
+	configDir := viper.GetString("configdir")
+	if configDir == "" {
+		configDir = os.Getenv("GGO_CONFIG_DIR")
+	}
+	if configDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Println("Error: Could not resolve user home directory:", err)
+			os.Exit(1)
+		}
+		configDir = filepath.Join(home, ".ggo")
+	}
+
+	// Ensure the base vault exists
+	os.MkdirAll(configDir, 0755)
+
+	// 2. Configure Viper to use this resolved directory
+	viper.AddConfigPath(configDir)
+	viper.SetConfigName("config")
+	viper.SetConfigType("yaml")
+	viper.AutomaticEnv() // Read in environment variables that match
+
+	// 3. Load Global Variables into memory (Global struct lives in config.go)
+	if err := viper.ReadInConfig(); err == nil {
+		Global.SourceDir = viper.GetString("source_dir")
+		Global.ChunksDir = viper.GetString("chunks_dir")
+		Global.IngestDir = viper.GetString("ingest_dir")
+		Global.ExportDate = viper.GetString("export_date")
+	}
 }

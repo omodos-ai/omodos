@@ -138,13 +138,20 @@ func ProjectToMarkdown(r *pb.AiRecord, conceptual bool) string {
 	if r.Input != nil {
 		sb.WriteString(r.Input.Narrative + "\n\n")
 
+		// Metadata Explosion Fix: Truncate massive attachment lists
 		if len(r.Input.Attachments) > 0 {
-			sb.WriteString("*(Attached Multimodal Documents: ")
 			var attNames []string
 			for _, a := range r.Input.Attachments {
 				attNames = append(attNames, a.FileName)
 			}
-			sb.WriteString(strings.Join(attNames, ", ") + ")*\n\n")
+
+			if len(attNames) <= 3 {
+				sb.WriteString(fmt.Sprintf("*(Attached Multimodal Documents: %s)*\n\n", strings.Join(attNames, ", ")))
+			} else {
+				preview := strings.Join(attNames[:3], ", ")
+				hiddenCount := len(attNames) - 3
+				sb.WriteString(fmt.Sprintf("*(Attached Multimodal Documents: %s ... and %d more files)*\n\n", preview, hiddenCount))
+			}
 		}
 
 		if !conceptual {

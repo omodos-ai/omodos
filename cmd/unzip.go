@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -37,16 +38,23 @@ var unzipCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// 1. Set the global export date automatically (acting exactly like set-export-date)
-		GlobalViper.Set("export_date", date)
-		home, _ := os.UserHomeDir()
-		err := GlobalViper.WriteConfigAs(filepath.Join(home, ".ggo", "config.yaml"))
-		if err != nil {
-			fmt.Printf("[Warning] Failed to save global export_date: %v\n", err)
-		} else {
-			fmt.Printf("[✓] Global export_date set to: %s\n", date)
-			Global.ExportDate = date // Update runtime state immediately
+		// 1. Safely set export date using the root-initialized viper (respects GGO_CONFIG_DIR)
+		viper.Set("export_date", date)
+		if err := viper.WriteConfig(); err != nil {
+			// Fallback if the config file didn't physically exist on disk yet
+			configDir := viper.GetString("configdir")
+			if configDir == "" {
+				configDir = os.Getenv("GGO_CONFIG_DIR")
+			}
+			if configDir == "" {
+				home, _ := os.UserHomeDir()
+				configDir = filepath.Join(home, ".ggo")
+			}
+			viper.WriteConfigAs(filepath.Join(configDir, "config.yaml"))
 		}
+
+		fmt.Printf("[✓] Global export_date set to: %s\n", date)
+		Global.ExportDate = date // Update runtime state immediately
 
 		// 2. Pre-check for existing directory to prevent accidental wipes
 		targetDir := filepath.Join(Global.IngestDir, provider, date+"-export")
