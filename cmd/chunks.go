@@ -33,7 +33,11 @@ var chunksCmd = &cobra.Command{
 		}
 
 		fullSource := filepath.Join(sourceDir, "ai-records", "full")
-		cogSource := filepath.Join(sourceDir, "ai-records", "cognitive")
+
+		// Quick Fix: Point the conceptual chunker at the 'full' ledger to dynamically strip from
+		// the single source of truth. We keep the old path here for when we re-wire it later.
+		// cogSource := filepath.Join(sourceDir, "ai-records", "cognitive")
+		cogSource := filepath.Join(sourceDir, "ai-records", "full")
 
 		fullChunks := filepath.Join(chunksDir, "full", exportDate)
 		cogChunks := filepath.Join(chunksDir, "cognitive", exportDate)
@@ -124,7 +128,12 @@ func ProjectToMarkdown(r *pb.AiRecord, conceptual bool) string {
 
 	sb.WriteString("### Prompt\n")
 	if r.Input != nil {
-		sb.WriteString(r.Input.Narrative + "\n\n")
+		narrative := r.Input.Narrative
+		if conceptual {
+			// This now safely calls the function living in gemini_pr_resp.go
+			narrative = stripLargeCodeBlocks(narrative)
+		}
+		sb.WriteString(narrative + "\n\n")
 
 		if len(r.Input.Attachments) > 0 {
 			var attNames []string
@@ -159,7 +168,12 @@ func ProjectToMarkdown(r *pb.AiRecord, conceptual bool) string {
 
 	sb.WriteString("### Response\n")
 	if r.Output != nil {
-		sb.WriteString(r.Output.Narrative + "\n\n")
+		narrative := r.Output.Narrative
+		if conceptual {
+			// This now safely calls the function living in gemini_pr_resp.go
+			narrative = stripLargeCodeBlocks(narrative)
+		}
+		sb.WriteString(narrative + "\n\n")
 
 		if !conceptual {
 			if len(r.Output.Snippets) > 0 {
