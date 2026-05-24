@@ -12,11 +12,11 @@ import (
 
 	"github.com/atotto/clipboard"
 	"github.com/chzyer/readline"
+	"github.com/peterjbraam/ggo/pb/v1"
 )
 
 var ActiveChatName string
 
-// GetActiveChat ensures we always know what chat we are in, even across reboots
 func GetActiveChat() string {
 	if ActiveChatName != "" {
 		return ActiveChatName
@@ -63,8 +63,6 @@ func handleP(ctx context.Context, l *readline.Instance) {
 			break
 		}
 		if prompt != "" {
-			// Because we are explicitly interacting via the REPL multi-line prompt,
-			// fromPipe is always false here.
 			sendAndRender(ctx, prompt, false, l.Stdout())
 		}
 	}
@@ -159,8 +157,6 @@ func buildJITContextAndSync() string {
 	return "-"
 }
 
-// DispatchPrompt handles JIT context packing, API routing, clipboard pushes,
-// and transactional ledger recording. It returns the sanitized output for the Daemon/REPL.
 func DispatchPrompt(ctx context.Context, prompt string, source string) (string, error) {
 	activeChat := GetActiveChat()
 	contextStr := buildJITContextAndSync()
@@ -200,24 +196,10 @@ func DispatchPrompt(ctx context.Context, prompt string, source string) (string, 
 		}
 	}
 	includesStr := strings.TrimSpace(includesBuilder.String())
+	slug := MakeSafeSlug(prompt)
 
-	words := strings.Fields(prompt)
-	limit := 5
-	if len(words) < limit {
-		limit = len(words)
-	}
-	subjectStr := strings.Join(words[:limit], " ")
-	reg := regexp.MustCompile(`[^a-zA-Z0-9]+`)
-	slug := reg.ReplaceAllString(subjectStr, "-")
-	slug = strings.ToLower(strings.Trim(slug, "-"))
-	if len(slug) > 20 {
-		slug = strings.TrimRight(slug[:20], "-")
-	}
-	if slug == "" {
-		slug = "interaction"
-	}
-
-	record := fmt.Sprintf(`## AI Interaction
+	// 1. Maintain local human-readable project chat log
+	recordMarkdown := fmt.Sprintf(`## AI Interaction
 ### Date
 %s
 ### Chat
@@ -242,31 +224,44 @@ func DispatchPrompt(ctx context.Context, prompt string, source string) (string, 
 - Transaction Anchor: %s
 
 ---
-`, dateISO, activeChat, source, modelName, includesStr, cwd, subjectStr, contextStr, prompt, response, anchor)
+`, dateISO, activeChat, source, modelName, includesStr, cwd, slug, contextStr, prompt, response, anchor)
 
 	home, _ := os.UserHomeDir()
 	chatPath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "chats", activeChat+".md")
 	f, err := os.OpenFile(chatPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err == nil {
-		f.WriteString(record)
+		f.WriteString(recordMarkdown)
 		f.Close()
 	}
 
-	if Global.SourceDir != "" {
-		sourcesDir := filepath.Join(Global.SourceDir, year, month)
-		os.MkdirAll(sourcesDir, 0755)
-		archivePath := filepath.Join(sourcesDir, fmt.Sprintf("%s-%s.md", filenameTime, slug))
-		os.WriteFile(archivePath, []byte(record), 0644)
+	// 2. Write strict JSON schema to the global AI Records Database
+	if Global.RecordsDir != "" {
+		recordsDir := filepath.Join(Global.RecordsDir, year, month)
+		jsonFilename := fmt.Sprintf("%s-%s.json", filenameTime, slug)
+
+		record := &pb.AiRecord{
+			Metadata: &pb.Metadata{
+				TimestampUtc: dateISO,
+				ChatId:       activeChat,
+				ModelName:    modelName,
+			},
+			Input: &pb.UserInput{
+				Narrative: prompt,
+			},
+			Output: &pb.AIResponse{
+				Narrative: response,
+			},
+		}
+
+		WriteRecord(recordsDir, jsonFilename, record)
 	}
 
-	// Sanitize output for safe consumption by Emacs/Terminals
 	cleanResp := strings.ReplaceAll(response, "\x00", "")
 	cleanResp = strings.ReplaceAll(cleanResp, "\x1b", "")
 
 	return cleanResp, nil
 }
 
-// sendAndRender is the CLI-specific wrapper that broadcasts to all subscribers
 func sendAndRender(ctx context.Context, prompt string, fromPipe bool, stdout io.Writer) {
 	fmt.Fprintf(stdout, "\033[90mThinking...\033[0m\n\n")
 
@@ -275,7 +270,6 @@ func sendAndRender(ctx context.Context, prompt string, fromPipe bool, stdout io.
 		source = "ggo-emacs-pipe"
 	}
 
-	// 1. Dispatch writes to the Disk Ledger internally
 	response, err := DispatchPrompt(ctx, prompt, source)
 	if err != nil {
 		fmt.Fprintf(stdout, "\033[31m[API Error]\033[0m %v\n", err)
@@ -285,11 +279,9 @@ func sendAndRender(ctx context.Context, prompt string, fromPipe bool, stdout io.
 		return
 	}
 
-	// 2. Broadcast to Terminal
 	fmt.Fprintln(stdout, response)
 	fmt.Fprintln(stdout)
 
-	// 3. Broadcast to Emacs Pipe
 	if ResponsePipe != nil {
 		ResponsePipe.WriteString(response + "\n")
 	}

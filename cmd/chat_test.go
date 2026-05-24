@@ -19,10 +19,10 @@ func TestLiveEndToEndChatAndContext(t *testing.T) {
 		t.Skip("Skipping live test: not running from within a configured ggo project root.")
 	}
 
-	// Create a temporary source_dir for the test so we don't pollute the actual global directory
-	tempSourceDir, _ := os.MkdirTemp(".", "tmp-source-dir-*")
-	origSourceDir := Global.SourceDir
-	Global.SourceDir = tempSourceDir
+	// Create a temporary records_dir for the test so we don't pollute the actual global directory
+	tempRecordsDir, _ := os.MkdirTemp(".", "tmp-records-dir-*")
+	origRecordsDir := Global.RecordsDir
+	Global.RecordsDir = tempRecordsDir
 
 	// 2. Setup local sandbox inside the real working directory
 	tempDir, err := os.MkdirTemp(".", "tmp-chat-test-*")
@@ -34,8 +34,8 @@ func TestLiveEndToEndChatAndContext(t *testing.T) {
 	origIncludes := append([]string(nil), Project.IncludedData...)
 	defer func() {
 		os.RemoveAll(tempDir)
-		os.RemoveAll(tempSourceDir)
-		Global.SourceDir = origSourceDir
+		os.RemoveAll(tempRecordsDir)
+		Global.RecordsDir = origRecordsDir
 
 		Project.IncludedData = origIncludes
 		home, _ := os.UserHomeDir()

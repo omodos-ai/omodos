@@ -12,7 +12,7 @@ import (
 var ForceNew bool
 
 type GlobalConfig struct {
-	SourceDir   string            `mapstructure:"source_dir"`
+	RecordsDir  string            `mapstructure:"records_dir"`
 	ChunksDir   string            `mapstructure:"chunks_dir"`
 	IngestDir   string            `mapstructure:"ingest_dir"`
 	ExportDate  string            `mapstructure:"export_date"`
@@ -22,7 +22,7 @@ type GlobalConfig struct {
 
 type ProjectConfig struct {
 	ProjectName  string   `mapstructure:"project_name"`
-	SourceDir    string   `mapstructure:"source_dir"`
+	RecordsDir   string   `mapstructure:"records_dir"`
 	CodeDirs     []string `mapstructure:"code_dirs"`
 	IncludedData []string `mapstructure:"included_data"`
 	ModelName    string   `mapstructure:"model_name"`
@@ -74,17 +74,44 @@ func InitConfig() {
 		}
 	}
 
-	if activeProject != "" {
-		Global.LastProject = activeProject
-		GlobalViper.Set("last_project", activeProject)
-		GlobalViper.WriteConfigAs(filepath.Join(home, ".ggo", "config.yaml"))
-
-		ProjectViper = viper.New()
-		ProjectViper.SetConfigFile(filepath.Join(home, ".ggo", "ggoai-"+activeProject, "project.yaml"))
-		ProjectViper.SetConfigType("yaml")
-
-		if err := ProjectViper.ReadInConfig(); err == nil {
-			ProjectViper.Unmarshal(&Project)
-		}
+	// --- THE FIX: Fallback Workspace ---
+	// If the user runs ggo outside of a tracked directory, guarantee
+	// a default "global" workspace so ProjectViper is never nil.
+	if activeProject == "" {
+		activeProject = "global"
 	}
+
+	Global.LastProject = activeProject
+	GlobalViper.Set("last_project", activeProject)
+	GlobalViper.WriteConfigAs(filepath.Join(home, ".ggo", "config.yaml"))
+
+	ProjectViper = viper.New()
+	ProjectViper.SetConfigFile(filepath.Join(home, ".ggo", "ggoai-"+activeProject, "project.yaml"))
+	ProjectViper.SetConfigType("yaml")
+
+	if err := ProjectViper.ReadInConfig(); err == nil {
+		ProjectViper.Unmarshal(&Project)
+	}
+
+	// Force the struct to match the active project name
+	Project.ProjectName = activeProject
+}
+
+// Add this helper to cmd/config.go
+func GetConfigDir() string {
+	// 1. Check environment variable first
+	if envDir := os.Getenv("GGO_CONFIG_DIR"); envDir != "" {
+		return envDir
+	}
+	// 2. Fallback to standard home directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Printf("[Fatal] Could not resolve home directory: %v\n", err)
+		os.Exit(1)
+	}
+	return filepath.Join(home, ".ggo")
+}
+
+func GetProjectVaultDir(projectName string) string {
+	return filepath.Join(GetConfigDir(), "ggoai-"+projectName)
 }

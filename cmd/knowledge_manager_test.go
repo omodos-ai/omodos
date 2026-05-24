@@ -16,24 +16,21 @@ import (
 )
 
 func TestMassiveRealWorldIngest(t *testing.T) {
-	// 1. Unambiguous Physical Pathing
 	_, thisFile, _, _ := runtime.Caller(0)
 	cmdDir := filepath.Dir(thisFile)
 	repoRoot := filepath.Dir(cmdDir)
 	swDir := filepath.Dir(repoRoot)
 
-	// Define the permanent sandbox paths
 	baseTestDir := filepath.Join(swDir, "ggo-tests")
 	downloadsDir := filepath.Join(baseTestDir, "downloads")
 	ingestDir := filepath.Join(baseTestDir, "ingest")
-	sourceDir := filepath.Join(baseTestDir, "sources")
+	recordsDir := filepath.Join(baseTestDir, "records")
 	chunksDir := filepath.Join(baseTestDir, "chunks")
 
 	if _, err := os.Stat(downloadsDir); os.IsNotExist(err) {
 		t.Skipf("Skipping stress test: downloads directory not found at %s", downloadsDir)
 	}
 
-	// 2. Discover the zip files
 	var geminiZip, chatgptZip string
 	filepath.Walk(downloadsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -42,7 +39,7 @@ func TestMassiveRealWorldIngest(t *testing.T) {
 		name := info.Name()
 		if strings.Contains(name, "takeout") && strings.HasSuffix(name, ".zip") {
 			geminiZip = path
-		} else if strings.HasSuffix(name, ".zip") && !strings.Contains(name, "takeout") {
+		} else if strings.HasSuffix(name, ".zip") && strings.Contains(strings.ToLower(name), "chatgpt") {
 			chatgptZip = path
 		}
 		return nil
@@ -52,7 +49,6 @@ func TestMassiveRealWorldIngest(t *testing.T) {
 		t.Skip("Skipping stress test: could not find both Takeout and ChatGPT zips in " + downloadsDir)
 	}
 
-	// 3. Ephemeral Setup (Only for the binary and config to avoid littering)
 	tempDir := t.TempDir()
 	binPath := filepath.Join(tempDir, "ggo")
 	mainPath := filepath.Join(repoRoot, "main.go")
@@ -63,16 +59,13 @@ func TestMassiveRealWorldIngest(t *testing.T) {
 		t.Fatalf("Failed to compile ggo binary: %v\nOutput: %s", err, string(out))
 	}
 
-	// 4. Native Config Initialization (Pointing to the PERMANENT directories)
-	configYaml := fmt.Sprintf("ingest_dir: %s\nsource_dir: %s\nchunks_dir: %s\nexport_date: 2026-04-16\n",
-		ingestDir, sourceDir, chunksDir)
+	configYaml := fmt.Sprintf("ingest_dir: %s\nrecords_dir: %s\nchunks_dir: %s\nexport_date: 2026-04-16\n",
+		ingestDir, recordsDir, chunksDir)
 	os.WriteFile(filepath.Join(tempDir, "config.yaml"), []byte(configYaml), 0644)
 
-	// 5. Streamlined Movie Script (Re-Anchored to the new PR-RESP routines)
 	shellScript := fmt.Sprintf(`
 set -euo pipefail
 
-# Point GGO to our ephemeral config, which routes data to the permanent sandbox
 export GGO_CONFIG_DIR="%s"
 GGO="%s"
 
@@ -81,12 +74,12 @@ echo "--- Extracting Archives (7zz) ---"
 "$GGO" unzip chatgpt "%s" 2026-04-16 -f
 
 echo "--- Extracting Strict JSON AI Records ---"
-"$GGO" gemini-pr-resp
-"$GGO" cg-pr-resp
+"$GGO" extract gemini "%s/gemini/2026-04-16-export"
+"$GGO" extract chatgpt "%s/chatgpt/2026-04-16-export"
 
 echo "--- Firing the Knowledge Manager ---"
 "$GGO" chunks
-`, tempDir, binPath, geminiZip, chatgptZip)
+`, tempDir, binPath, geminiZip, chatgptZip, ingestDir, ingestDir)
 
 	t.Log("Executing CLI workflow script via mvdan/sh...")
 	parser := syntax.NewParser()
@@ -105,23 +98,19 @@ echo "--- Firing the Knowledge Manager ---"
 		t.Fatalf("CLI workflow script failed: %v", err)
 	}
 
-	// 6. Verification 1: Volume Check (Strictly bounded to the 'full' ledger)
 	var jsonCount int
-	fullRecordsDir := filepath.Join(sourceDir, "ai-records", "full")
-	filepath.Walk(fullRecordsDir, func(path string, info os.FileInfo, err error) error {
+	filepath.Walk(recordsDir, func(path string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() && strings.HasSuffix(info.Name(), ".json") {
 			jsonCount++
 		}
 		return nil
 	})
 
-	t.Logf("Extracted %d total interactions to strictly typed JSON (Full Ledger).", jsonCount)
-	// Lowered the bound slightly as strict parsing occasionally drops entirely empty/malformed nodes
+	t.Logf("Extracted %d total interactions to strictly typed JSON.", jsonCount)
 	if jsonCount < 14000 {
 		t.Errorf("Expected at least 14,000 records, got %d", jsonCount)
 	}
 
-	// 7. Verification 2: Markdown-in-Markdown Integrity
 	fullChunksDir := filepath.Join(chunksDir, "full", "2026-04-16")
 	var totalCodeBlocks int
 	codeBlockRegex := regexp.MustCompile("```[a-z]*\n")

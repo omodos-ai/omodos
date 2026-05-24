@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -19,11 +20,11 @@ var chunksCmd = &cobra.Command{
 	Short: "Projects JSON AiRecords into NotebookLM-ready Markdown chunks (Full & Cognitive)",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		sourceDir := Global.SourceDir
+		recordsDir := Global.RecordsDir
 		chunksDir := Global.ChunksDir
 
-		if sourceDir == "" || chunksDir == "" {
-			fmt.Println("[Error] Missing global config. Ensure source_dir and chunks_dir are set.")
+		if recordsDir == "" || chunksDir == "" {
+			fmt.Println("[Error] Missing global config. Ensure records_dir and chunks_dir are set.")
 			os.Exit(1)
 		}
 
@@ -31,13 +32,6 @@ var chunksCmd = &cobra.Command{
 		if exportDate == "" {
 			exportDate = time.Now().Format("2006-01-02")
 		}
-
-		fullSource := filepath.Join(sourceDir, "ai-records", "full")
-
-		// Quick Fix: Point the conceptual chunker at the 'full' ledger to dynamically strip from
-		// the single source of truth. We keep the old path here for when we re-wire it later.
-		// cogSource := filepath.Join(sourceDir, "ai-records", "cognitive")
-		cogSource := filepath.Join(sourceDir, "ai-records", "full")
 
 		fullChunks := filepath.Join(chunksDir, "full", exportDate)
 		cogChunks := filepath.Join(chunksDir, "cognitive", exportDate)
@@ -47,10 +41,10 @@ var chunksCmd = &cobra.Command{
 		fmt.Println("=======================================================")
 
 		fmt.Println("\n--- Phase 1: Projecting Full Records ---")
-		RunChunker(fullSource, fullChunks, false)
+		RunChunker(recordsDir, fullChunks, false)
 
 		fmt.Println("\n--- Phase 2: Projecting Cognitive Records ---")
-		RunChunker(cogSource, cogChunks, true)
+		RunChunker(recordsDir, cogChunks, true)
 	},
 }
 
@@ -58,21 +52,21 @@ func init() {
 	rootCmd.AddCommand(chunksCmd)
 }
 
-func RunChunker(sourceDir, outDir string, conceptual bool) {
+func RunChunker(recordsDir, outDir string, conceptual bool) {
 	var jsonFiles []string
-	err := filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(recordsDir, func(path string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() && strings.HasSuffix(info.Name(), ".json") {
 			jsonFiles = append(jsonFiles, path)
 		}
 		return nil
 	})
 	if err != nil {
-		fmt.Println("Error walking source directory:", err)
+		fmt.Println("Error walking records directory:", err)
 		return
 	}
 
 	if len(jsonFiles) == 0 {
-		fmt.Printf("[!] No JSON records found in %s\n", sourceDir)
+		fmt.Printf("[!] No JSON records found in %s\n", recordsDir)
 		return
 	}
 
@@ -86,7 +80,7 @@ func RunChunker(sourceDir, outDir string, conceptual bool) {
 	for _, file := range jsonFiles {
 		record, err := ReadRecord(file)
 		if err != nil {
-			continue
+			continue // Gracefully skip if it's a version from the future
 		}
 
 		md := ProjectToMarkdown(record, conceptual)
@@ -130,7 +124,6 @@ func ProjectToMarkdown(r *pb.AiRecord, conceptual bool) string {
 	if r.Input != nil {
 		narrative := r.Input.Narrative
 		if conceptual {
-			// This now safely calls the function living in gemini_pr_resp.go
 			narrative = stripLargeCodeBlocks(narrative)
 		}
 		sb.WriteString(narrative + "\n\n")
@@ -170,7 +163,6 @@ func ProjectToMarkdown(r *pb.AiRecord, conceptual bool) string {
 	if r.Output != nil {
 		narrative := r.Output.Narrative
 		if conceptual {
-			// This now safely calls the function living in gemini_pr_resp.go
 			narrative = stripLargeCodeBlocks(narrative)
 		}
 		sb.WriteString(narrative + "\n\n")
@@ -192,6 +184,17 @@ func ProjectToMarkdown(r *pb.AiRecord, conceptual bool) string {
 	}
 
 	return strings.TrimSpace(sb.String())
+}
+
+func stripLargeCodeBlocks(text string) string {
+	re := regexp.MustCompile("(?s)```(.*?)```")
+	return re.ReplaceAllStringFunc(text, func(match string) string {
+		lines := strings.Split(match, "\n")
+		if len(lines) > 12 {
+			return "```\n[Code block > 10 lines stripped for cognitive view]\n```"
+		}
+		return match
+	})
 }
 
 func writeChunk(outDir string, index int, content string) {

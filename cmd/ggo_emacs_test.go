@@ -34,12 +34,12 @@ func TestHermeticEmacsIPC(t *testing.T) {
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tempHome)
 
-	origSourceDir := Global.SourceDir
-	Global.SourceDir = filepath.Join(tempHome, "mock_sources")
+	origRecordsDir := Global.RecordsDir
+	Global.RecordsDir = filepath.Join(tempHome, "mock_records")
 
 	defer func() {
 		os.Setenv("HOME", origHome)
-		Global.SourceDir = origSourceDir
+		Global.RecordsDir = origRecordsDir
 	}()
 
 	ProjectViper = viper.New()

@@ -7,8 +7,15 @@
 
 (require 'ansi-color)
 
+(defun ggo--config-dir ()
+  "Return the base ggo configuration directory, respecting GGO_CONFIG_DIR."
+  (let ((env-dir (getenv "GGO_CONFIG_DIR")))
+    (if (and env-dir (not (string-empty-p env-dir)))
+        (expand-file-name env-dir)
+      (expand-file-name "~/.ggo"))))
+
 (defun ggo--get-active-project ()
-  (let ((config-file (expand-file-name "~/.ggo/config.yaml")))
+  (let ((config-file (expand-file-name "config.yaml" (ggo--config-dir))))
     (if (file-exists-p config-file)
         (with-temp-buffer
           (insert-file-contents config-file)
@@ -16,11 +23,15 @@
           (if (re-search-forward "^last_project:[ \t]*\\(.*?\\)$" nil t)
               (match-string 1)
             (error "No last_project found in ggo config.")))
-      (error "ggo config not found."))))
+      (error "ggo config not found at %s" config-file))))
 
 (defun ggo--get-pipe (pipe-name)
-  (let ((proj (ggo--get-active-project)))
-    (expand-file-name (format "~/.ggo/ggoai-%s/run/%s" proj pipe-name))))
+  (let* ((proj (ggo--get-active-project))
+         (pipe-dir (expand-file-name (format "ggoai-%s/run" proj) (ggo--config-dir))))
+    (expand-file-name pipe-name pipe-dir)))
+
+(defvar-local ggo-response-process nil)
+(defvar-local ggo-prompt-counter 1)
 
 (defvar-local ggo-response-process nil)
 (defvar-local ggo-prompt-counter 1)

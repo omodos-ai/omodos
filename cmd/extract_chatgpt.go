@@ -9,33 +9,8 @@ import (
 	"time"
 
 	"github.com/peterjbraam/ggo/pb/v1"
-	"github.com/spf13/cobra"
 )
 
-var cgPrRespCmd = &cobra.Command{
-	Use:   "cg-pr-resp",
-	Short: "Parses ChatGPT JSON exports into the markdown ledger",
-	Args:  cobra.NoArgs,
-	Run: func(cmd *cobra.Command, args []string) {
-		if Global.SourceDir == "" || Global.IngestDir == "" {
-			fmt.Println("[Error] Missing global config. Ensure source_dir and ingest_dir are set.")
-			os.Exit(1)
-		}
-
-		exportDir := filepath.Join(Global.IngestDir, "chatgpt")
-		fmt.Printf("Starting ChatGPT Parse Pipeline...\n")
-		fmt.Printf("Source Dir: %s\n", Global.SourceDir)
-		fmt.Printf("Ingest Dir: %s\n", exportDir)
-
-		RunChatGPTExtract(Global.SourceDir, exportDir)
-	},
-}
-
-func init() {
-	rootCmd.AddCommand(cgPrRespCmd)
-}
-
-// Structs kept exactly as they were in your original parser
 type ChatGPTExport []ChatGPTConversation
 
 type ChatGPTConversation struct {
@@ -65,7 +40,7 @@ type ChatGPTContent struct {
 	Parts []interface{} `json:"parts"`
 }
 
-func RunChatGPTExtract(sourceDir, exportDir string) {
+func RunChatGPTExtract(recordsDir, exportDir string, overwrite bool) {
 	jsonPaths := findChatGPTShards(exportDir)
 	if len(jsonPaths) == 0 {
 		fmt.Printf("[!] Could not find any conversations.json shards in %s, skipping...\n", exportDir)
@@ -73,16 +48,15 @@ func RunChatGPTExtract(sourceDir, exportDir string) {
 	}
 
 	totalCount := 0
+	totalSkipped := 0
 	for _, jsonPath := range jsonPaths {
-		totalCount += processChatGPTShard(jsonPath, sourceDir)
+		written, skipped := processChatGPTShard(jsonPath, recordsDir, overwrite)
+		totalCount += written
+		totalSkipped += skipped
 	}
 
-	fmt.Printf("[✓] Safely extracted %d ChatGPT interactions from %d shard(s) to full and cognitive ledgers.\n", totalCount, len(jsonPaths))
+	fmt.Printf("[✓] Extracted %d ChatGPT interactions from %d shard(s) to JSON ledger (Skipped: %d).\n", totalCount, len(jsonPaths), totalSkipped)
 }
-
-// -----------------------------------------------------------------------------
-// Extraction Helpers
-// -----------------------------------------------------------------------------
 
 func findChatGPTShards(exportDir string) []string {
 	var paths []string
@@ -98,32 +72,36 @@ func findChatGPTShards(exportDir string) []string {
 	return paths
 }
 
-func processChatGPTShard(jsonPath, sourceDir string) int {
+func processChatGPTShard(jsonPath, recordsDir string, overwrite bool) (int, int) {
 	bytes, err := os.ReadFile(jsonPath)
 	if err != nil {
-		return 0
+		return 0, 0
 	}
 
 	var conversations ChatGPTExport
 	if err := json.Unmarshal(bytes, &conversations); err != nil {
-		return 0
+		return 0, 0
 	}
 
-	shardCount := 0
+	writtenCount := 0
+	skippedCount := 0
 	for _, conv := range conversations {
-		shardCount += processChatGPTConversation(conv, sourceDir)
+		w, s := processChatGPTConversation(conv, recordsDir, overwrite)
+		writtenCount += w
+		skippedCount += s
 	}
-	return shardCount
+	return writtenCount, skippedCount
 }
 
-func processChatGPTConversation(conv ChatGPTConversation, sourceDir string) int {
+func processChatGPTConversation(conv ChatGPTConversation, recordsDir string, overwrite bool) (int, int) {
 	chatTitle := conv.Title
 	if chatTitle == "" {
 		chatTitle = "Untitled Chat"
 	}
 
 	activeTimeline := buildConversationTimeline(conv)
-	count := 0
+	written := 0
+	skipped := 0
 	var currentPrompt string
 	var promptTime time.Time
 
@@ -145,19 +123,21 @@ func processChatGPTConversation(conv ChatGPTConversation, sourceDir string) int 
 		}
 
 		if role == "assistant" && currentPrompt != "" {
-			writeChatGPTRecord(sourceDir, chatTitle, currentPrompt, text, promptTime)
-			count++
-			currentPrompt = "" // Reset for the next conversational turn
+			if writeChatGPTRecord(recordsDir, chatTitle, currentPrompt, text, promptTime, overwrite) {
+				written++
+			} else {
+				skipped++
+			}
+			currentPrompt = ""
 		}
 	}
-	return count
+	return written, skipped
 }
 
 func buildConversationTimeline(conv ChatGPTConversation) []*ChatGPTNode {
 	var timeline []*ChatGPTNode
 	curr := conv.CurrentNode
 
-	// Walk backwards up the graph
 	for curr != "" {
 		node, exists := conv.Mapping[curr]
 		if !exists {
@@ -167,7 +147,6 @@ func buildConversationTimeline(conv ChatGPTConversation) []*ChatGPTNode {
 		curr = node.Parent
 	}
 
-	// Reverse to chronological order
 	for i, j := 0, len(timeline)-1; i < j; i, j = i+1, j-1 {
 		timeline[i], timeline[j] = timeline[j], timeline[i]
 	}
@@ -184,15 +163,23 @@ func extractMessageText(msg *ChatGPTMessage) string {
 	return strings.TrimSpace(strings.Join(textParts, "\n"))
 }
 
-func writeChatGPTRecord(sourceDir, chatTitle, prompt, response string, promptTime time.Time) {
+func writeChatGPTRecord(recordsDir, chatTitle, prompt, response string, promptTime time.Time, overwrite bool) bool {
 	year := fmt.Sprintf("%04d", promptTime.Year())
 	month := fmt.Sprintf("%02d", promptTime.Month())
 	timestamp := promptTime.Format("20060102T150405Z")
 	safeSubject := MakeSafeSlug(prompt)
 	filename := fmt.Sprintf("%s-cg-%s.json", timestamp, safeSubject)
 
-	// 1. Build the Full Record
-	fullRecord := &pb.AiRecord{
+	targetDir := filepath.Join(recordsDir, year, month)
+	fullPath := filepath.Join(targetDir, filename)
+
+	if !overwrite {
+		if _, err := os.Stat(fullPath); err == nil {
+			return false
+		}
+	}
+
+	record := &pb.AiRecord{
 		Metadata: &pb.Metadata{
 			TimestampUtc: promptTime.Format(time.RFC3339),
 			ChatId:       chatTitle,
@@ -206,16 +193,6 @@ func writeChatGPTRecord(sourceDir, chatTitle, prompt, response string, promptTim
 		},
 	}
 
-	// 2. Clone and strip for the Cognitive Record (Identical to Gemini behavior)
-	cogRecord := proto.Clone(fullRecord).(*pb.AiRecord)
-	cogRecord.Input.Narrative = stripLargeCodeBlocks(cogRecord.Input.Narrative)
-	cogRecord.Output.Narrative = stripLargeCodeBlocks(cogRecord.Output.Narrative)
-
-	fullPath := filepath.Join(sourceDir, "ai-records", "full", year, month)
-	cogPath := filepath.Join(sourceDir, "ai-records", "cognitive", year, month)
-
-	// 3. Write to both ledgers
-	WriteRecord(fullPath, filename, fullRecord)
-	WriteRecord(cogPath, filename, cogRecord)
+	WriteRecord(targetDir, filename, record)
+	return true
 }
-

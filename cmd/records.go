@@ -13,8 +13,8 @@ import (
 
 const CurrentSchemaVersion = 1
 
-// ReadRecord safely loads a JSON file into the strict Protobuf struct.
-// protojson automatically handles unknown fields and schema evolution safely.
+var WarnedSchemaVersion bool
+
 func ReadRecord(path string) (*pb.AiRecord, error) {
 	bytes, err := os.ReadFile(path)
 	if err != nil {
@@ -23,7 +23,6 @@ func ReadRecord(path string) (*pb.AiRecord, error) {
 
 	record := &pb.AiRecord{}
 
-	// Unmarshal using protojson (DiscardUnknown allows reading older/newer schemas safely)
 	unmarshaler := protojson.UnmarshalOptions{
 		DiscardUnknown: true,
 	}
@@ -32,15 +31,17 @@ func ReadRecord(path string) (*pb.AiRecord, error) {
 		return nil, fmt.Errorf("failed to parse AiRecord protobuf from JSON: %v", err)
 	}
 
-	// Future-proofing: Reject records from a vastly future version of the omo/ggo binary
 	if record.Version > CurrentSchemaVersion {
+		if !WarnedSchemaVersion {
+			fmt.Printf("\n\033[31m[WARNING] Found records with version %d (newer than current CLI version %d). Skipping to prevent data corruption. Please upgrade omodos.\033[0m\n\n", record.Version, CurrentSchemaVersion)
+			WarnedSchemaVersion = true
+		}
 		return nil, fmt.Errorf("record version %d is newer than current CLI version %d", record.Version, CurrentSchemaVersion)
 	}
 
 	return record, nil
 }
 
-// WriteRecord ensures strict Protobuf serialization to human-readable JSON on disk
 func WriteRecord(targetDir, filename string, record *pb.AiRecord) error {
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		return err
@@ -49,11 +50,10 @@ func WriteRecord(targetDir, filename string, record *pb.AiRecord) error {
 
 	record.Version = CurrentSchemaVersion
 
-	// Serialize Protobuf to beautifully indented JSON
 	marshaler := protojson.MarshalOptions{
 		Multiline:       true,
 		Indent:          "  ",
-		EmitUnpopulated: false, // Keeps the JSON lean by dropping empty arrays/strings
+		EmitUnpopulated: false,
 	}
 
 	bytes, err := marshaler.Marshal(record)
@@ -64,7 +64,6 @@ func WriteRecord(targetDir, filename string, record *pb.AiRecord) error {
 	return os.WriteFile(path, bytes, 0644)
 }
 
-// MakeSafeSlug generates a predictable, safe filename prefix from prompt text
 func MakeSafeSlug(str string) string {
 	words := strings.Fields(str)
 	limit := 5

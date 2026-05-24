@@ -96,6 +96,8 @@ func listenControlPipe(eventChan chan<- InputEvent) {
 }
 
 func RunREPL() {
+	InitConfig()
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -118,6 +120,7 @@ func RunREPL() {
 	}
 
 	var completer = readline.NewPrefixCompleter(
+		// ... (Keep your existing completer rules exactly as they are) ...
 		readline.PcItem("quit"),
 		readline.PcItem("exit"),
 		readline.PcItem("clear"),
@@ -130,7 +133,7 @@ func RunREPL() {
 			readline.PcItem("temperature"),
 			readline.PcItem("top_p"),
 			readline.PcItem("safety_level"),
-			readline.PcItem("source_dir", readline.PcItemDynamic(listFiles)),
+			readline.PcItem("records_dir", readline.PcItemDynamic(listFiles)),
 			readline.PcItem("chunks_dir", readline.PcItemDynamic(listFiles)),
 			readline.PcItem("ingest_dir", readline.PcItemDynamic(listFiles)),
 			readline.PcItem("export_date"),
@@ -186,6 +189,8 @@ func RunREPL() {
 	setupPipes()
 
 	eventChan := make(chan InputEvent)
+	// 1. ADD THIS: Create the synchronization channel
+	termDoneChan := make(chan bool)
 
 	go listenPromptPipe(eventChan)
 	go listenControlPipe(eventChan)
@@ -204,6 +209,9 @@ func RunREPL() {
 				return
 			}
 			eventChan <- InputEvent{Source: "terminal", Payload: line}
+
+			// 2. ADD THIS: Wait for the main loop to process the command before redrawing the prompt
+			<-termDoneChan
 		}
 	}()
 
@@ -232,6 +240,11 @@ func RunREPL() {
 			}
 		} else {
 			executeCommand(ctx, event.Payload, l, false)
+		}
+
+		// 3. ADD THIS: Signal the terminal goroutine that output is complete
+		if event.Source == "terminal" {
+			termDoneChan <- true
 		}
 	}
 
@@ -472,7 +485,6 @@ func handleShowRoles() {
 		rolesMap[k] = v
 	}
 
-	// Scan the project vault to surface any dynamically created or edited roles
 	matches, _ := filepath.Glob(filepath.Join(projVault, "role-*.md"))
 	for _, match := range matches {
 		base := filepath.Base(match)
@@ -587,7 +599,7 @@ func handleSet(parts []string) {
 		}
 	}
 
-	isGlobal := GlobalViper.IsSet(field) || field == "export_date" || field == "source_dir" || field == "chunks_dir" || field == "ingest_dir"
+	isGlobal := GlobalViper.IsSet(field) || field == "export_date" || field == "records_dir" || field == "chunks_dir" || field == "ingest_dir"
 	isProject := ProjectViper.IsSet(field) || field == "project_name" || field == "shell_cmd" || field == "diff_cmd" || field == "model_name" || field == "temperature" || field == "top_p" || field == "safety_level" || field == "role"
 
 	ExecuteTransaction("set_"+field, func(anchor string, now time.Time) error {
