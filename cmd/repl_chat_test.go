@@ -72,7 +72,7 @@ func TestLiveAutoCopyToClipboard(t *testing.T) {
 
 	ProjectViper = viper.New()
 	GlobalViper = viper.New()
-	Project.ProjectName = "live_clipboard_test"
+	ProjectCfg.ProjectName = "live_clipboard_test"
 	ActiveChatName = "clipboard_chat"
 
 	// Create required directories so UpdateChatModel can write GEMINI.md

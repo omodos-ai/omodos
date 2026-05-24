@@ -16,7 +16,7 @@ func TestHandleShowCosts_ValidData(t *testing.T) {
 	os.Setenv("HOME", tempHome)
 	defer os.Setenv("HOME", origHome)
 
-	Project.ProjectName = "cost_test_project"
+	ProjectCfg.ProjectName = "cost_test_project"
 	logDir := filepath.Join(tempHome, ".ggo", "ggoai-cost_test_project")
 	os.MkdirAll(logDir, 0755)
 
@@ -34,7 +34,7 @@ func TestHandleShowCosts_ValidData(t *testing.T) {
 	os.Stdout = w
 
 	// 4. Action
-	handleShowCosts()
+	handleShowCosts([]string{"show", "costs", "all"})
 
 	// 5. Restore Stdout & Read
 	w.Close()
@@ -76,7 +76,7 @@ func TestHandleShowCosts_NoData(t *testing.T) {
 	os.Setenv("HOME", tempHome)
 	defer os.Setenv("HOME", origHome)
 
-	Project.ProjectName = "empty_cost_project"
+	ProjectCfg.ProjectName = "empty_cost_project"
 
 	// 2. Hijack Stdout (Intentionally NOT creating the log directory or CSV)
 	oldStdout := os.Stdout
@@ -84,7 +84,7 @@ func TestHandleShowCosts_NoData(t *testing.T) {
 	os.Stdout = w
 
 	// 3. Action
-	handleShowCosts()
+	handleShowCosts([]string{"show", "costs", "all"})
 
 	// 4. Restore Stdout & Read
 	w.Close()

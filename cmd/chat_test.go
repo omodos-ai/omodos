@@ -1,11 +1,13 @@
 package cmd
 
 import (
-	"github.com/spf13/viper"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/peterjbraam/ggo/pb/v1"
+	"github.com/spf13/viper"
 )
 
 func TestLiveEndToEndChatAndContext(t *testing.T) {
@@ -21,8 +23,12 @@ func TestLiveEndToEndChatAndContext(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	// FIX 2: STRICT SANDBOXING. Wipe the globals so previous tests can't bleed in!
-	Global = GlobalConfig{}
-	Project = ProjectConfig{}
+	// FIX 2: STRICT SANDBOXING. Wipe the globals so previous tests can't bleed in!
+	GlobalCfg = &pb.GlobalConfig{}
+	GlobalSt = &pb.GlobalState{Projects: make(map[string]string)}
+	ProjectCfg = &pb.ProjectConfig{}
+	ProjectSt = &pb.ProjectState{}
+
 	ProjectViper = viper.New()
 	GlobalViper = viper.New()
 
@@ -36,7 +42,7 @@ func TestLiveEndToEndChatAndContext(t *testing.T) {
 		}
 	}()
 
-	Project.ProjectName = "live_chat_test"
+	ProjectCfg.ProjectName = "live_chat_test"
 	os.MkdirAll(filepath.Join(tempDir, ".ggo", "ggoai-live_chat_test", "chats"), 0755)
 
 	testFile := filepath.Join(tempDir, "system_config.txt")
@@ -47,7 +53,7 @@ func TestLiveEndToEndChatAndContext(t *testing.T) {
 	script1 := "inc " + testFile + "\ncc live_test_chat\nWhat is the current STATUS in system_config.txt? Answer with just the value.\nexit\n"
 	runScript(script1)
 
-	chatPath := filepath.Join(GetProjectVaultDir(Project.ProjectName), "chats", "live_test_chat.md")
+	chatPath := filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), "chats", "live_test_chat.md")
 
 	contentBytes, err := os.ReadFile(chatPath)
 	if err != nil {

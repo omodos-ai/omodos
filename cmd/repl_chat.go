@@ -36,9 +36,9 @@ func handleCC(parts []string) {
 	ActiveChatName = parts[1]
 
 	ProjectViper.Set("active_chat", ActiveChatName)
-	ProjectViper.WriteConfigAs(filepath.Join(GetProjectVaultDir(Project.ProjectName), "project.yaml"))
+	ProjectViper.WriteConfigAs(filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), "project.yaml"))
 
-	chatDir := filepath.Join(GetProjectVaultDir(Project.ProjectName), "chats")
+	chatDir := filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), "chats")
 	os.MkdirAll(chatDir, 0755)
 
 	filePath := filepath.Join(chatDir, ActiveChatName+".md")
@@ -103,16 +103,16 @@ func readMultiLine(l *readline.Instance, instructions string) (string, bool) {
 }
 
 func buildJITContextAndSync() string {
-	if len(Project.IncludedData) == 0 {
+	if len(ProjectSt.IncludedData) == 0 {
 		return "-"
 	}
 
 	var xmlBuilder strings.Builder
 	modifiedCount := 0
-	centralIncludesDir := filepath.Join(GetProjectVaultDir(Project.ProjectName), "includes")
+	centralIncludesDir := filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), "includes")
 	cwd, _ := os.Getwd()
 
-	for _, targetPath := range Project.IncludedData {
+	for _, targetPath := range ProjectSt.IncludedData {
 		filepath.Walk(targetPath, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
@@ -186,10 +186,10 @@ func DispatchPrompt(ctx context.Context, prompt string, source string) (string, 
 	}
 
 	var includesBuilder strings.Builder
-	if len(Project.IncludedData) == 0 {
+	if len(ProjectSt.IncludedData) == 0 {
 		includesBuilder.WriteString("-\n")
 	} else {
-		for _, inc := range Project.IncludedData {
+		for _, inc := range ProjectSt.IncludedData {
 			includesBuilder.WriteString("- " + inc + "\n")
 		}
 	}
@@ -224,7 +224,7 @@ func DispatchPrompt(ctx context.Context, prompt string, source string) (string, 
 ---
 `, dateISO, activeChat, source, modelName, includesStr, cwd, slug, contextStr, prompt, response, anchor)
 
-	chatPath := filepath.Join(GetProjectVaultDir(Project.ProjectName), "chats", activeChat+".md")
+	chatPath := filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), "chats", activeChat+".md")
 	f, err := os.OpenFile(chatPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err == nil {
 		f.WriteString(recordMarkdown)
@@ -232,8 +232,8 @@ func DispatchPrompt(ctx context.Context, prompt string, source string) (string, 
 	}
 
 	// 2. Write strict JSON schema to the global AI Records Database
-	if Global.RecordsDir != "" {
-		recordsDir := filepath.Join(Global.RecordsDir, year, month)
+	if GlobalCfg.RecordsDir != "" {
+		recordsDir := filepath.Join(GlobalCfg.RecordsDir, year, month)
 		jsonFilename := fmt.Sprintf("%s-%s.json", filenameTime, slug)
 
 		record := &pb.AiRecord{

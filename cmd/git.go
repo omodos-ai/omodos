@@ -110,7 +110,7 @@ func ExecuteTransaction(slug string, action func(anchor string, now time.Time) e
 	now := time.Now().UTC()
 	anchor := now.Format("20060102T150405Z")
 
-	centralRepoDir := GetProjectVaultDir(Project.ProjectName)
+	centralRepoDir := GetProjectVaultDir(ProjectCfg.ProjectName)
 	centralGitDir := filepath.Join(centralRepoDir, ".git")
 
 	isInit := false
@@ -144,7 +144,7 @@ func ExecuteTransaction(slug string, action func(anchor string, now time.Time) e
 
 func SyncAllShadows(anchor, phase, msg string) {
 
-	for _, dir := range Project.CodeDirs {
+	for _, dir := range ProjectCfg.CodeDirs {
 		absDir, _ := filepath.Abs(dir)
 		repoID := getRepoID(absDir)
 
@@ -165,7 +165,7 @@ func SyncAllShadows(anchor, phase, msg string) {
 }
 
 func SnapshotCentral(msg, tag string) {
-	centralRepoDir := GetProjectVaultDir(Project.ProjectName)
+	centralRepoDir := GetProjectVaultDir(ProjectCfg.ProjectName)
 	gitDir := filepath.Join(centralRepoDir, ".git")
 
 	exec.Command("git", "--git-dir="+gitDir, "--work-tree="+centralRepoDir, "add", "-A").Run()

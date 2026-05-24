@@ -22,8 +22,8 @@ func TestUnifiedPipesAndBroadcasting(t *testing.T) {
 
 	ProjectViper = viper.New()
 	GlobalViper = viper.New()
-	Project.ProjectName = "pipe_test_project"
-	Project.CodeDirs = []string{}
+	ProjectCfg.ProjectName = "pipe_test_project"
+	ProjectCfg.CodeDirs = []string{}
 	ActiveChatName = "pipe_chat"
 
 	runDir := filepath.Join(tempHome, ".ggo", "ggoai-pipe_test_project", "run")

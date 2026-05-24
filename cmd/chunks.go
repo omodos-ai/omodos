@@ -20,15 +20,15 @@ var chunksCmd = &cobra.Command{
 	Short: "Projects JSON AiRecords into NotebookLM-ready Markdown chunks (Full & Cognitive)",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		recordsDir := Global.RecordsDir
-		chunksDir := Global.ChunksDir
+		recordsDir := GlobalCfg.RecordsDir
+		chunksDir := GlobalCfg.ChunksDir
 
 		if recordsDir == "" || chunksDir == "" {
 			fmt.Println("[Error] Missing global config. Ensure records_dir and chunks_dir are set.")
 			os.Exit(1)
 		}
 
-		exportDate := Global.ExportDate
+		exportDate := GlobalSt.ExportDate
 		if exportDate == "" {
 			exportDate = time.Now().Format("2006-01-02")
 		}

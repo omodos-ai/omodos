@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/peterjbraam/ggo/pb/v1"
 	"github.com/spf13/viper"
 )
 
@@ -29,9 +30,11 @@ func TestEndToEndTimeMachine(t *testing.T) {
 	os.Chdir(tempDir)
 	defer os.Chdir(origDir)
 
-	// FIX 2: STRICT SANDBOXING. Wipe the globals!
-	Global = GlobalConfig{}
-	Project = ProjectConfig{}
+	GlobalCfg = &pb.GlobalConfig{}
+	GlobalSt = &pb.GlobalState{Projects: make(map[string]string)}
+	ProjectCfg = &pb.ProjectConfig{}
+	ProjectSt = &pb.ProjectState{}
+
 	ProjectViper = viper.New()
 	GlobalViper = viper.New()
 
@@ -48,7 +51,12 @@ func TestEndToEndTimeMachine(t *testing.T) {
 	os.Setenv("HOME", tempDir)
 
 	os.MkdirAll(filepath.Join(tempDir, ".ggo", "ggoai-e2e_test"), 0755)
-	os.WriteFile(filepath.Join(tempDir, ".ggo", "global.yaml"), []byte(""), 0644)
+
+	// FIX: Write state.json instead of config.yaml to properly track the active project!
+	statePath := filepath.Join(tempDir, ".ggo", "state.json")
+	stateContent := `{"last_project": "e2e_test", "projects": {"e2e_test": "` + tempDir + `"}}`
+	os.WriteFile(statePath, []byte(stateContent), 0644)
+
 	os.WriteFile(filepath.Join(tempDir, ".ggo", "ggoai-e2e_test", "project.yaml"), []byte(""), 0644)
 
 	exec.Command("git", "init").Run()
@@ -56,10 +64,11 @@ func TestEndToEndTimeMachine(t *testing.T) {
 	exec.Command("git", "add", "main.go").Run()
 	exec.Command("git", "commit", "-m", "Initial").Run()
 
-	Project = ProjectConfig{
+	ProjectCfg = &pb.ProjectConfig{
 		ProjectName: "e2e_test",
 		CodeDirs:    []string{},
 	}
+
 	InitConfig()
 
 	t.Log("--- ggo script execution ---")

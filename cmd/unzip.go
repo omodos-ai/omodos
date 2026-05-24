@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -33,30 +32,18 @@ var unzipCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if Global.IngestDir == "" {
-			fmt.Println("[Error] Missing global config. Ensure 'ingest_dir' is set.")
+		if GlobalCfg.IngestDir == "" {
+			fmt.Println("[Error] Missing global config. Ensure 'ingest_dir' is set in config.yaml.")
 			os.Exit(1)
 		}
 
-		// 1. Safely set export date using the root-initialized viper (respects GGO_CONFIG_DIR)
-		viper.Set("export_date", date)
-		if err := viper.WriteConfig(); err != nil {
-			// Fallback if the config file didn't physically exist on disk yet
-			configDir := viper.GetString("configdir")
-			if configDir == "" {
-				configDir = os.Getenv("GGO_CONFIG_DIR")
-			}
-			if configDir == "" {
-				configDir = GetConfigDir()
-			}
-			viper.WriteConfigAs(filepath.Join(configDir, "config.yaml"))
-		}
-
-		fmt.Printf("[✓] Global export_date set to: %s\n", date)
-		Global.ExportDate = date // Update runtime state immediately
+		// 1. Safely set export date in STATE (not CONFIG!)
+		GlobalSt.ExportDate = date
+		SaveGlobalState()
+		fmt.Printf("[✓] Global export_date set to: %s (Saved to state.json)\n", date)
 
 		// 2. Pre-check for existing directory to prevent accidental wipes
-		targetDir := filepath.Join(Global.IngestDir, provider, date+"-export")
+		targetDir := filepath.Join(GlobalCfg.IngestDir, provider, date+"-export")
 		if _, err := os.Stat(targetDir); !os.IsNotExist(err) && !force {
 			fmt.Printf("[Error] Target directory already exists: %s\n", targetDir)
 			fmt.Println("        Use the -f flag to wipe and force overwrite.")
@@ -82,8 +69,7 @@ var unzipCmd = &cobra.Command{
 			forceStr = "true"
 		}
 
-		// Pass explicit deterministic arguments to the bash script
-		scriptArgs := []string{provider, zipPath, Global.IngestDir, date, forceStr}
+		scriptArgs := []string{provider, zipPath, GlobalCfg.IngestDir, date, forceStr}
 
 		runner, err := interp.New(
 			interp.StdIO(os.Stdin, os.Stdout, os.Stderr),

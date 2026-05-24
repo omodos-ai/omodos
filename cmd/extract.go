@@ -18,7 +18,7 @@ var extractCmd = &cobra.Command{
 		provider := strings.ToLower(args[0])
 		ingestDir := args[1]
 
-		if Global.RecordsDir == "" {
+		if GlobalCfg.RecordsDir == "" {
 			fmt.Println("[Error] Missing global config. Ensure records_dir is set.")
 			os.Exit(1)
 		}
@@ -26,13 +26,13 @@ var extractCmd = &cobra.Command{
 		switch provider {
 		case "gemini":
 			fmt.Printf("Starting Strict Gemini Parse Pipeline...\n")
-			RunGeminiExtract(Global.RecordsDir, ingestDir, overwriteRecords)
+			RunGeminiExtract(GlobalCfg.RecordsDir, ingestDir, overwriteRecords)
 		case "chatgpt":
 			fmt.Printf("Starting ChatGPT Parse Pipeline...\n")
-			RunChatGPTExtract(Global.RecordsDir, ingestDir, overwriteRecords)
+			RunChatGPTExtract(GlobalCfg.RecordsDir, ingestDir, overwriteRecords)
 		case "mdchat":
 			fmt.Printf("Starting Local Markdown Chat Extraction...\n")
-			RunMdchatExtract(Global.RecordsDir, ingestDir, overwriteRecords)
+			RunMdchatExtract(GlobalCfg.RecordsDir, ingestDir, overwriteRecords)
 		case "claude":
 			fmt.Println("[Info] Claude extraction is planned for a future release.")
 		default:

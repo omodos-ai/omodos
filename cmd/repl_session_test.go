@@ -21,8 +21,8 @@ func TestApplyMacroEditsUnit(t *testing.T) {
 	// Mock config so the ExecuteTransaction hook inside ApplyMacroEdits succeeds
 	ProjectViper = viper.New()
 	GlobalViper = viper.New()
-	Project.ProjectName = "macro_unit_test"
-	Project.CodeDirs = []string{} // <-- Added to prevent test leakage!
+	ProjectCfg.ProjectName = "macro_unit_test"
+	ProjectCfg.CodeDirs = []string{} // <-- Added to prevent test leakage!
 	os.MkdirAll(filepath.Join(tempHome, ".ggo", "ggoai-macro_unit_test"), 0755)
 
 	// 2. Setup mock file paths
@@ -90,8 +90,8 @@ func TestLiveApplyMacroEdits(t *testing.T) {
 
 	ProjectViper = viper.New()
 	GlobalViper = viper.New()
-	Project.ProjectName = "live_macro_test"
-	Project.CodeDirs = []string{} // <-- Added to prevent test leakage!
+	ProjectCfg.ProjectName = "live_macro_test"
+	ProjectCfg.CodeDirs = []string{} // <-- Added to prevent test leakage!
 	ActiveChatName = "macro_chat"
 
 	// Create required directories so UpdateChatModel can write GEMINI.md

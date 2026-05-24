@@ -11,7 +11,6 @@ import (
 )
 
 func TestModelParameterTuning(t *testing.T) {
-	// 1. Sandbox setup
 	tempHome := t.TempDir()
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tempHome)
@@ -21,39 +20,32 @@ func TestModelParameterTuning(t *testing.T) {
 	projDir := filepath.Join(tempHome, ".ggo", "ggoai-"+projName)
 	os.MkdirAll(projDir, 0755)
 
-	// Initialize a dummy git repo so ExecuteTransaction doesn't complain
 	exec.Command("git", "-C", projDir, "init").Run()
 
-	// Mock global config so InitConfig can resolve the active project
-	configPath := filepath.Join(tempHome, ".ggo", "config.yaml")
-	configContent := "last_project: " + projName + "\nprojects:\n  " + projName + ": " + tempHome + "\n"
-	os.WriteFile(configPath, []byte(configContent), 0644)
+	// FIX: Write state.json instead of config.yaml
+	statePath := filepath.Join(tempHome, ".ggo", "state.json")
+	stateContent := `{"last_project": "` + projName + `", "projects": {"` + projName + `": "` + tempHome + `"}}`
+	os.WriteFile(statePath, []byte(stateContent), 0644)
 
-	// Ensure Viper knows what project we are in
-	Project.ProjectName = projName
+	ProjectCfg.ProjectName = projName
 	InitConfig()
 
-	// 2. Hijack Stdout to capture CLI output
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	// 3. User Actions (Simulating REPL input)
 	handleSet([]string{"set", "temperature", "0.85"})
 	handleSet([]string{"set", "top_p", "0.65"})
 	handleSet([]string{"set", "safety_level", "low"})
 
-	// Print the params table
 	handleShowParams()
 
-	// 4. Restore Stdout & Read
 	w.Close()
 	os.Stdout = oldStdout
 	var buf bytes.Buffer
 	io.Copy(&buf, r)
 	output := buf.String()
 
-	// 5. Verification: Console Output
 	if !strings.Contains(output, "Updated: temperature = 0.85") {
 		t.Errorf("Failed to confirm temperature update. Output:\n%s", output)
 	}
@@ -67,7 +59,6 @@ func TestModelParameterTuning(t *testing.T) {
 		t.Errorf("'show params' table missing safety_level 'low'. Output:\n%s", output)
 	}
 
-	// 6. Verification: Physical Disk Persistence
 	yamlBytes, err := os.ReadFile(filepath.Join(projDir, "project.yaml"))
 	if err != nil {
 		t.Fatalf("Failed to read project.yaml: %v", err)

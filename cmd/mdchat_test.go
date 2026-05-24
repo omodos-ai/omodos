@@ -19,9 +19,9 @@ func TestChatRecordLifecycle(t *testing.T) {
 	ProjectViper = viper.New()
 	GlobalViper = viper.New()
 
-	Global.RecordsDir = filepath.Join(tempHome, "mock_records_tree")
-	Project.ProjectName = "test_project"
-	Global.Projects = map[string]string{
+	GlobalCfg.RecordsDir = filepath.Join(tempHome, "mock_records_tree")
+	ProjectCfg.ProjectName = "test_project"
+	GlobalSt.Projects = map[string]string{
 		"test_project": filepath.Join(tempHome, "test_workspace"),
 	}
 
@@ -47,7 +47,7 @@ func TestChatRecordLifecycle(t *testing.T) {
 	sendAndRender(context.Background(), expectedPrompt, false, os.Stdout)
 
 	var foundRecordPath string
-	err = filepath.Walk(Global.RecordsDir, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(GlobalCfg.RecordsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -58,7 +58,7 @@ func TestChatRecordLifecycle(t *testing.T) {
 	})
 
 	if err != nil || foundRecordPath == "" {
-		t.Fatalf("Bug confirmed: sendAndRender failed to write the JSON record to %s", Global.RecordsDir)
+		t.Fatalf("Bug confirmed: sendAndRender failed to write the JSON record to %s", GlobalCfg.RecordsDir)
 	}
 
 	recordBytes, _ := os.ReadFile(foundRecordPath)
@@ -67,13 +67,13 @@ func TestChatRecordLifecycle(t *testing.T) {
 		t.Fatalf("Initial JSON record does not contain the expected prompt/response.\nGot: %s", recordContent)
 	}
 
-	os.RemoveAll(Global.RecordsDir)
-	os.MkdirAll(Global.RecordsDir, 0755)
+	os.RemoveAll(GlobalCfg.RecordsDir)
+	os.MkdirAll(GlobalCfg.RecordsDir, 0755)
 
-	RunMdchatExtract(Global.RecordsDir, chatsDir, false)
+	RunMdchatExtract(GlobalCfg.RecordsDir, chatsDir, false)
 
 	var reconstructedPath string
-	err = filepath.Walk(Global.RecordsDir, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(GlobalCfg.RecordsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}

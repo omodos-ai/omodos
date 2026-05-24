@@ -16,7 +16,7 @@ func handleGitRemote(parts []string) {
 	}
 
 	action := parts[1]
-	projectName := Project.ProjectName
+	projectName := ProjectCfg.ProjectName
 	if len(parts) >= 3 {
 		projectName = parts[2]
 	}
@@ -34,9 +34,9 @@ func handleGitRemote(parts []string) {
 		fmt.Println("\n--- Pushing Central Vault ---")
 		pushRepo(vaultDir, vaultRepoName)
 
-		if projectName == Project.ProjectName {
+		if projectName == ProjectCfg.ProjectName {
 			fmt.Println("\n--- Pushing Enrolled Code Repositories ---")
-			for _, codeDir := range Project.CodeDirs {
+			for _, codeDir := range ProjectCfg.CodeDirs {
 				dirName := filepath.Base(codeDir)
 				pushRepo(codeDir, dirName)
 			}
@@ -46,9 +46,9 @@ func handleGitRemote(parts []string) {
 		fmt.Println("\n--- Pulling Central Vault ---")
 		pullRepo(vaultDir)
 
-		if projectName == Project.ProjectName {
+		if projectName == ProjectCfg.ProjectName {
 			fmt.Println("\n--- Pulling Enrolled Code Repositories ---")
-			for _, codeDir := range Project.CodeDirs {
+			for _, codeDir := range ProjectCfg.CodeDirs {
 				pullRepo(codeDir)
 			}
 		}

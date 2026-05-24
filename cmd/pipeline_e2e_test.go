@@ -13,10 +13,10 @@ func TestKnowledgeManagerPipeline(t *testing.T) {
 	ingestDir := filepath.Join(tempDir, "ingest")
 	chunksDir := filepath.Join(tempDir, "chunks")
 
-	Global.RecordsDir = recordsDir
-	Global.IngestDir = ingestDir
-	Global.ChunksDir = chunksDir
-	Global.ExportDate = "2026-04-19"
+	GlobalCfg.RecordsDir = recordsDir
+	GlobalCfg.IngestDir = ingestDir
+	GlobalCfg.ChunksDir = chunksDir
+	GlobalSt.ExportDate = "2026-04-19"
 
 	geminiDir := filepath.Join(ingestDir, "gemini", "2026-04-19-export")
 	os.MkdirAll(geminiDir, 0755)

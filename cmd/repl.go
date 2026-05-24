@@ -25,10 +25,10 @@ type InputEvent struct {
 }
 
 func setupPipes() {
-	if Project.ProjectName == "" {
+	if ProjectCfg.ProjectName == "" {
 		return
 	}
-	runDir := filepath.Join(GetProjectVaultDir(Project.ProjectName), "run")
+	runDir := filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), "run")
 	os.MkdirAll(runDir, 0755)
 
 	pipes := []string{
@@ -56,7 +56,7 @@ func setupPipes() {
 }
 
 func listenPromptPipe(eventChan chan<- InputEvent) {
-	pipePath := filepath.Join(GetProjectVaultDir(Project.ProjectName), "run", "prompt.pipe")
+	pipePath := filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), "run", "prompt.pipe")
 	for {
 		pFile, err := os.OpenFile(pipePath, os.O_RDONLY, os.ModeNamedPipe)
 		if err != nil {
@@ -74,7 +74,7 @@ func listenPromptPipe(eventChan chan<- InputEvent) {
 }
 
 func listenControlPipe(eventChan chan<- InputEvent) {
-	pipePath := filepath.Join(GetProjectVaultDir(Project.ProjectName), "run", "control.pipe")
+	pipePath := filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), "run", "control.pipe")
 	for {
 		cFile, err := os.OpenFile(pipePath, os.O_RDONLY, os.ModeNamedPipe)
 		if err != nil {
@@ -158,7 +158,7 @@ func RunREPL() {
 		readline.PcItem("gs"),
 	)
 
-	historyPath := filepath.Join(GetProjectVaultDir(Project.ProjectName), "ggo_history")
+	historyPath := filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), "ggo_history")
 
 	l, err := readline.NewEx(&readline.Config{
 		Prompt:            "\033[36mggo>\033[0m ",
@@ -211,7 +211,7 @@ func RunREPL() {
 		}
 	}()
 
-	fmt.Printf("Welcome to ggo [%s]. Unified Hub Active. Type 'quit' to exit.\n", Project.ProjectName)
+	fmt.Printf("Welcome to ggo [%s]. Unified Hub Active. Type 'quit' to exit.\n", ProjectCfg.ProjectName)
 
 	for event := range eventChan {
 		if event.Payload == "quit" || event.Payload == "exit" {
@@ -298,7 +298,7 @@ func executeCommand(ctx context.Context, line string, l *readline.Instance, from
 		}
 	case "show":
 		if len(parts) > 1 && parts[1] == "costs" {
-			handleShowCosts()
+			handleShowCosts(parts)
 		} else if len(parts) > 1 && parts[1] == "params" {
 			handleShowParams()
 		} else if len(parts) > 1 && parts[1] == "roles" {
@@ -360,10 +360,10 @@ func handleList(ctx context.Context, parts []string) {
 	target := parts[1]
 	if target == "projects" {
 		fmt.Println("\n--- Tracked ggo Projects ---")
-		if len(Global.Projects) == 0 {
+		if len(GlobalSt.Projects) == 0 {
 			fmt.Println("No projects tracked yet.")
 		} else {
-			for name, path := range Global.Projects {
+			for name, path := range GlobalSt.Projects {
 				fmt.Printf("- %-15s [%s]\n", name, path)
 			}
 		}
@@ -444,7 +444,7 @@ func handleAddRole(parts []string) {
 		roleContent = []byte(descOrFile)
 	}
 
-	projVault := GetProjectVaultDir(Project.ProjectName)
+	projVault := GetProjectVaultDir(ProjectCfg.ProjectName)
 	rolePath := filepath.Join(projVault, fmt.Sprintf("role-%s.md", roleName))
 
 	ExecuteTransaction("add_role_"+roleName, func(anchor string, now time.Time) error {
@@ -472,7 +472,7 @@ func handleShowRoles() {
 		activeRole = ProjectViper.GetString("role")
 	}
 
-	projVault := GetProjectVaultDir(Project.ProjectName)
+	projVault := GetProjectVaultDir(ProjectCfg.ProjectName)
 
 	rolesMap := make(map[string]string)
 	for k, v := range DefaultRoles {
@@ -509,8 +509,8 @@ func handleShowRoles() {
 	fmt.Println("--------------------------")
 }
 
-func handleShowCosts() {
-	logPath := filepath.Join(GetProjectVaultDir(Project.ProjectName), "cost.csv")
+func handleShowCosts(parts []string) {
+	logPath := filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), "cost.csv")
 
 	data, err := os.ReadFile(logPath)
 	if err != nil {
@@ -524,10 +524,28 @@ func handleShowCosts() {
 		return
 	}
 
+	// Default to the 1st of the current month
+	filterDate := time.Now().UTC().Format("2006-01") + "-01T00:00:00Z"
+	title := "Costs (Since start of month)"
+
+	if len(parts) > 2 {
+		if strings.ToLower(parts[2]) == "all" {
+			filterDate = ""
+			title = "Costs (All Time)"
+		} else {
+			filterDate = parts[2]
+			if len(filterDate) == 10 { // e.g. 2026-05-15
+				filterDate += "T00:00:00Z"
+			}
+			title = fmt.Sprintf("Costs (Since %s)", parts[2])
+		}
+	}
+
 	var totalIn, totalOut, totalTokens int
 	var totalCost float64
+	var printCount int
 
-	fmt.Println("\n--- Project Cost Summary ---")
+	fmt.Printf("\n--- Project Cost Summary: %s ---\n", title)
 	fmt.Printf("%-25s %-12s %-12s %-12s %-15s\n", "Date (UTC)", "Input", "Output", "Total", "Est. Cost (USD)")
 	fmt.Println(strings.Repeat("-", 80))
 
@@ -535,6 +553,10 @@ func handleShowCosts() {
 		cols := strings.Split(lines[i], ",")
 		if len(cols) < 6 {
 			continue
+		}
+
+		if filterDate != "" && cols[0] < filterDate {
+			continue // Skip records older than the filter date
 		}
 
 		inTok, _ := strconv.Atoi(cols[2])
@@ -548,13 +570,23 @@ func handleShowCosts() {
 		totalTokens += totTok
 		totalCost += cost
 
-		if i >= len(lines)-5 {
+		// Only print the last 5 relevant lines to keep the UI clean
+		if len(lines)-i <= 5 {
 			fmt.Printf("%-25s %-12d %-12d %-12d $%.6f\n", cols[0], inTok, outTok, totTok, cost)
+			printCount++
 		}
+	}
+
+	if printCount == 0 {
+		fmt.Println("  (No transactions found in this period)")
 	}
 
 	fmt.Println(strings.Repeat("-", 80))
 	fmt.Printf("\033[32m%-25s %-12d %-12d %-12d $%.6f\033[0m\n\n", "TOTAL", totalIn, totalOut, totalTokens, totalCost)
+
+	if filterDate != "" {
+		fmt.Println("(Hint: Run 'show costs all' to view all-time ledger)")
+	}
 }
 
 func handleSet(parts []string) {
@@ -592,17 +624,27 @@ func handleSet(parts []string) {
 		}
 	}
 
-	isGlobal := GlobalViper.IsSet(field) || field == "export_date" || field == "records_dir" || field == "chunks_dir" || field == "ingest_dir"
+	// Route STATE variables strictly to GlobalSt
+	if field == "export_date" {
+		GlobalSt.ExportDate = value
+		SaveGlobalState()
+		fmt.Printf("[✓] Updated state: export_date = %v\n", value)
+		return
+	}
+
+	// Route CONFIG variables to Viper
+	isGlobalConfig := GlobalViper.IsSet(field) || field == "records_dir" || field == "chunks_dir" || field == "ingest_dir"
 	isProject := ProjectViper.IsSet(field) || field == "project_name" || field == "shell_cmd" || field == "diff_cmd" || field == "model_name" || field == "temperature" || field == "top_p" || field == "safety_level" || field == "role"
 
 	ExecuteTransaction("set_"+field, func(anchor string, now time.Time) error {
-		if isGlobal {
+		if isGlobalConfig {
 			GlobalViper.Set(field, finalValue)
-			GlobalViper.WriteConfig()
+			// Explicitly save using the correct path to prevent empty overwrites
+			GlobalViper.WriteConfigAs(filepath.Join(GetConfigDir(), "config.yaml"))
 			InitConfig()
 		} else if isProject {
 			ProjectViper.Set(field, finalValue)
-			ProjectViper.WriteConfigAs(filepath.Join(GetProjectVaultDir(Project.ProjectName), "project.yaml"))
+			ProjectViper.WriteConfigAs(filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), "project.yaml"))
 			InitConfig()
 
 			if field == "model_name" || field == "temperature" || field == "top_p" || field == "safety_level" || field == "role" {
@@ -611,7 +653,7 @@ func handleSet(parts []string) {
 		}
 		return nil
 	})
-	fmt.Printf("[✓] Updated: %s = %v\n", field, finalValue)
+	fmt.Printf("[✓] Updated config: %s = %v\n", field, finalValue)
 }
 
 func expandTilde(path string) string {

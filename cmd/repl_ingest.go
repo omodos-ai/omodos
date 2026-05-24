@@ -29,7 +29,7 @@ func handleContextInclude(ctx context.Context, parts []string) {
 	// We use ExecuteTransaction here just to log the ingestion event in the Time Machine ledger,
 	// but it does not affect the Git working tree.
 	ExecuteTransaction("context_include", func(anchor string, now time.Time) error {
-		centralRepoDir := GetProjectVaultDir(Project.ProjectName)
+		centralRepoDir := GetProjectVaultDir(ProjectCfg.ProjectName)
 		centralIncludesDir := filepath.Join(centralRepoDir, "includes")
 
 		fmt.Printf("Scanning and syncing paths for AI Context...\n")
@@ -83,16 +83,16 @@ func handleContextInclude(ctx context.Context, parts []string) {
 		}
 
 		existing := make(map[string]bool)
-		for _, item := range Project.IncludedData {
+		for _, item := range ProjectSt.IncludedData {
 			existing[item] = true
 		}
 		for _, p := range paths {
 			if !existing[p] {
-				Project.IncludedData = append(Project.IncludedData, p)
+				ProjectSt.IncludedData = append(ProjectSt.IncludedData, p)
 				existing[p] = true
 			}
 		}
-		ProjectViper.Set("included_data", Project.IncludedData)
+		ProjectViper.Set("included_data", ProjectSt.IncludedData)
 		ProjectViper.WriteConfigAs(filepath.Join(centralRepoDir, "project.yaml"))
 
 		fmt.Printf("Ingesting %d files into AI context...\033[90m (Thinking...)\033[0m\n", len(addedFiles))

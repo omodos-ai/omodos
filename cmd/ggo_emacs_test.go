@@ -34,17 +34,17 @@ func TestHermeticEmacsIPC(t *testing.T) {
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tempHome)
 
-	origRecordsDir := Global.RecordsDir
-	Global.RecordsDir = filepath.Join(tempHome, "mock_records")
+	origRecordsDir := GlobalCfg.RecordsDir
+	GlobalCfg.RecordsDir = filepath.Join(tempHome, "mock_records")
 
 	defer func() {
 		os.Setenv("HOME", origHome)
-		Global.RecordsDir = origRecordsDir
+		GlobalCfg.RecordsDir = origRecordsDir
 	}()
 
 	ProjectViper = viper.New()
 	GlobalViper = viper.New()
-	Project.ProjectName = "emacs_test"
+	ProjectCfg.ProjectName = "emacs_test"
 	ActiveChatName = "emacs_chat"
 
 	os.MkdirAll(filepath.Join(tempHome, ".ggo", "ggoai-emacs_test", "run"), 0755)

@@ -6,65 +6,74 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/peterjbraam/ggo/pb/v1"
 	"github.com/spf13/viper"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 var ForceNew bool
 
-type GlobalConfig struct {
-	RecordsDir  string            `mapstructure:"records_dir"`
-	ChunksDir   string            `mapstructure:"chunks_dir"`
-	IngestDir   string            `mapstructure:"ingest_dir"`
-	ExportDate  string            `mapstructure:"export_date"`
-	Projects    map[string]string `mapstructure:"projects"`
-	LastProject string            `mapstructure:"last_project"`
-}
-
-type ProjectConfig struct {
-	ProjectName  string   `mapstructure:"project_name"`
-	RecordsDir   string   `mapstructure:"records_dir"`
-	CodeDirs     []string `mapstructure:"code_dirs"`
-	IncludedData []string `mapstructure:"included_data"`
-	ModelName    string   `mapstructure:"model_name"`
-	Temperature  float64  `mapstructure:"temperature"`
-	TopP         float64  `mapstructure:"top_p"`
-	SafetyLevel  string   `mapstructure:"safety_level"`
-}
-
+// The strictly typed, segregated configuration structs
 var (
-	Global       GlobalConfig
-	Project      ProjectConfig
+	GlobalCfg  *pb.GlobalConfig
+	GlobalSt   *pb.GlobalState
+	ProjectCfg *pb.ProjectConfig
+	ProjectSt  *pb.ProjectState
+
 	GlobalViper  *viper.Viper
 	ProjectViper *viper.Viper
 )
 
-func InitConfig() {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Printf("Error getting home directory: %v\n", err)
-		os.Exit(1)
+// ExpandTilde safely resolves ~ to the absolute user home directory
+func ExpandTilde(path string) string {
+	if strings.HasPrefix(path, "~") {
+		home, _ := os.UserHomeDir()
+		if path == "~" {
+			return home
+		}
+		if strings.HasPrefix(path, "~/") {
+			return filepath.Join(home, path[2:])
+		}
 	}
+	return path
+}
 
+func InitConfig() {
+	configDir := GetConfigDir()
+	os.MkdirAll(configDir, 0755)
+
+	// 1. Load Global Config (Human Preferences - YAML)
+	GlobalCfg = &pb.GlobalConfig{}
 	GlobalViper = viper.New()
-	GlobalViper.SetConfigFile(filepath.Join(home, ".ggo", "config.yaml"))
+	GlobalViper.SetConfigFile(filepath.Join(configDir, "config.yaml"))
 	GlobalViper.SetConfigType("yaml")
 	if err := GlobalViper.ReadInConfig(); err == nil {
-		GlobalViper.Unmarshal(&Global)
+		// Enforce Tilde Expansion on all paths
+		GlobalCfg.RecordsDir = ExpandTilde(GlobalViper.GetString("records_dir"))
+		GlobalCfg.ChunksDir = ExpandTilde(GlobalViper.GetString("chunks_dir"))
+		GlobalCfg.IngestDir = ExpandTilde(GlobalViper.GetString("ingest_dir"))
+	}
+
+	// 2. Load Global State (Machine Telemetry - JSON)
+	GlobalSt = &pb.GlobalState{Projects: make(map[string]string)}
+	statePath := filepath.Join(configDir, "state.json")
+	if bytes, err := os.ReadFile(statePath); err == nil {
+		protojson.Unmarshal(bytes, GlobalSt)
 	}
 
 	cwd, _ := os.Getwd()
 	var activeProject string
 	var longestMatch int
 
-	if !ForceNew && Global.LastProject != "" && Global.Projects != nil {
-		if path, exists := Global.Projects[Global.LastProject]; exists {
-			activeProject = Global.LastProject
-			os.Chdir(path)
+	if !ForceNew && GlobalSt.LastProject != "" && GlobalSt.Projects != nil {
+		if path, exists := GlobalSt.Projects[GlobalSt.LastProject]; exists {
+			activeProject = GlobalSt.LastProject
+			os.Chdir(path) // Auto-resume workspace
 		}
 	}
 
-	if activeProject == "" && Global.Projects != nil {
-		for name, path := range Global.Projects {
+	if activeProject == "" && GlobalSt.Projects != nil {
+		for name, path := range GlobalSt.Projects {
 			if strings.HasPrefix(cwd, path) {
 				if len(path) > longestMatch {
 					longestMatch = len(path)
@@ -74,36 +83,65 @@ func InitConfig() {
 		}
 	}
 
-	// --- THE FIX: Fallback Workspace ---
-	// If the user runs ggo outside of a tracked directory, guarantee
-	// a default "global" workspace so ProjectViper is never nil.
 	if activeProject == "" {
 		activeProject = "global"
 	}
 
-	Global.LastProject = activeProject
-	GlobalViper.Set("last_project", activeProject)
-	GlobalViper.WriteConfigAs(filepath.Join(home, ".ggo", "config.yaml"))
+	// Persist the active project state instantly
+	GlobalSt.LastProject = activeProject
+	SaveGlobalState()
+
+	// 3. Load Project Config (Human Preferences - YAML)
+	ProjectCfg = &pb.ProjectConfig{ProjectName: activeProject}
+	projVault := GetProjectVaultDir(activeProject)
+	os.MkdirAll(projVault, 0755)
 
 	ProjectViper = viper.New()
-	ProjectViper.SetConfigFile(filepath.Join(home, ".ggo", "ggoai-"+activeProject, "project.yaml"))
+	ProjectViper.SetConfigFile(filepath.Join(projVault, "project.yaml"))
 	ProjectViper.SetConfigType("yaml")
-
 	if err := ProjectViper.ReadInConfig(); err == nil {
-		ProjectViper.Unmarshal(&Project)
+		ProjectCfg.CodeDirs = ProjectViper.GetStringSlice("code_dirs")
+		ProjectCfg.ModelName = ProjectViper.GetString("model_name")
+		ProjectCfg.Temperature = ProjectViper.GetFloat64("temperature")
+		ProjectCfg.TopP = ProjectViper.GetFloat64("top_p")
+		ProjectCfg.SafetyLevel = ProjectViper.GetString("safety_level")
+		ProjectCfg.Role = ProjectViper.GetString("role")
+		ProjectCfg.RecordsDir = ExpandTilde(ProjectViper.GetString("records_dir"))
 	}
+	ProjectCfg.ProjectName = activeProject // Enforce structural integrity
 
-	// Force the struct to match the active project name
-	Project.ProjectName = activeProject
+	// 4. Load Project State (Machine Telemetry - JSON)
+	ProjectSt = &pb.ProjectState{}
+	projStatePath := filepath.Join(projVault, "state.json")
+	if bytes, err := os.ReadFile(projStatePath); err == nil {
+		protojson.Unmarshal(bytes, ProjectSt)
+	}
 }
 
-// Add this helper to cmd/config.go
+// --- State Persisters (Bypasses Viper to protect Config) ---
+
+func SaveGlobalState() {
+	bytes, err := protojson.MarshalOptions{Multiline: true, EmitUnpopulated: false}.Marshal(GlobalSt)
+	if err == nil {
+		os.WriteFile(filepath.Join(GetConfigDir(), "state.json"), bytes, 0644)
+	}
+}
+
+func SaveProjectState() {
+	projVault := GetProjectVaultDir(ProjectCfg.ProjectName)
+	os.MkdirAll(projVault, 0755)
+	bytes, err := protojson.MarshalOptions{Multiline: true, EmitUnpopulated: false}.Marshal(ProjectSt)
+	if err == nil {
+		os.WriteFile(filepath.Join(projVault, "state.json"), bytes, 0644)
+	}
+}
+
+// --- Path Helpers ---
+
 func GetConfigDir() string {
-	// 1. Check environment variable first
 	if envDir := os.Getenv("GGO_CONFIG_DIR"); envDir != "" {
 		return envDir
 	}
-	// 2. Fallback to standard home directory
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Printf("[Fatal] Could not resolve home directory: %v\n", err)

@@ -11,7 +11,6 @@ import (
 )
 
 func TestRolePersonaEngine(t *testing.T) {
-	// 1. Sandbox setup
 	tempHome := t.TempDir()
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tempHome)
@@ -21,44 +20,37 @@ func TestRolePersonaEngine(t *testing.T) {
 	projVault := filepath.Join(tempHome, ".ggo", "ggoai-"+projName)
 	os.MkdirAll(projVault, 0755)
 
-	// Initialize a dummy git repo so ExecuteTransaction doesn't complain
 	exec.Command("git", "-C", projVault, "init").Run()
 
-	configPath := filepath.Join(tempHome, ".ggo", "config.yaml")
-	configContent := "last_project: " + projName + "\nprojects:\n  " + projName + ": " + tempHome + "\n"
-	os.WriteFile(configPath, []byte(configContent), 0644)
+	// FIX: Write state.json instead of config.yaml
+	statePath := filepath.Join(tempHome, ".ggo", "state.json")
+	stateContent := `{"last_project": "` + projName + `", "projects": {"` + projName + `": "` + tempHome + `"}}`
+	os.WriteFile(statePath, []byte(stateContent), 0644)
 
-	Project.ProjectName = projName
+	ProjectCfg.ProjectName = projName
 	InitConfig()
 
-	// 2. Hijack Stdout
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	// 3. User Actions (Simulating REPL input)
 	handleSet([]string{"set", "role", "math"})
 	handleAddRole([]string{"add", "role", "hacker", "You are an elite cyber security penetration tester."})
 	handleShowRoles()
 
-	// 4. Restore Stdout & Read
 	w.Close()
 	os.Stdout = oldStdout
 	var buf bytes.Buffer
 	io.Copy(&buf, r)
 	output := buf.String()
 
-	// 5. Verification: Console Output
 	if !strings.Contains(output, "Updated: role = math") {
 		t.Errorf("Failed to confirm role update. Output:\n%s", output)
 	}
-
-	// The custom role should have been scanned from disk and added to the UI
 	if !strings.Contains(output, "hacker") || !strings.Contains(output, "cyber security") {
 		t.Errorf("'show roles' table missing the dynamically added 'hacker' role. Output:\n%s", output)
 	}
 
-	// 6. Verification: Physical Disk Extraction
 	rulesBytes, err := os.ReadFile(filepath.Join(projVault, "RULES.md"))
 	if err != nil {
 		t.Fatalf("ggo failed to dynamically extract RULES.md to disk: %v", err)

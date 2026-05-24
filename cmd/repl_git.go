@@ -42,7 +42,7 @@ func handleGitAddRepo(parts []string) {
 	}
 
 	// Check if already tracked
-	for _, c := range Project.CodeDirs {
+	for _, c := range ProjectCfg.CodeDirs {
 		if c == gitRoot {
 			fmt.Printf("[Info] Repository %s is already tracked by the Time Machine.\n", gitRoot)
 			return
@@ -50,9 +50,9 @@ func handleGitAddRepo(parts []string) {
 	}
 
 	// Enroll it into the Time Machine code_dirs
-	Project.CodeDirs = append(Project.CodeDirs, gitRoot)
-	ProjectViper.Set("code_dirs", Project.CodeDirs)
-	ProjectViper.WriteConfigAs(filepath.Join(GetProjectVaultDir(Project.ProjectName), "project.yaml"))
+	ProjectCfg.CodeDirs = append(ProjectCfg.CodeDirs, gitRoot)
+	ProjectViper.Set("code_dirs", ProjectCfg.CodeDirs)
+	ProjectViper.WriteConfigAs(filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), "project.yaml"))
 
 	fmt.Printf("\033[32m[✓] Enrolled Git repository into Time Machine:\033[0m %s\n", gitRoot)
 
@@ -63,7 +63,7 @@ func handleGitAddRepo(parts []string) {
 }
 
 func getLedgerTags() []string {
-	centralGitDir := filepath.Join(GetProjectVaultDir(Project.ProjectName), ".git")
+	centralGitDir := filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), ".git")
 	out, err := exec.Command("git", "--git-dir="+centralGitDir, "tag", "--sort=creatordate").CombinedOutput()
 	var tags []string
 	if err == nil {
@@ -112,7 +112,7 @@ func handleGS(parts []string) {
 
 	fmt.Printf("\033[35m[ggo] Traveling through time to %s...\033[0m\n", tag)
 
-	for _, dir := range Project.CodeDirs {
+	for _, dir := range ProjectCfg.CodeDirs {
 		absDir, _ := filepath.Abs(dir)
 		repoID := getRepoID(absDir)
 		shadowDir := filepath.Join(GetConfigDir(), "shadow-repos", repoID)

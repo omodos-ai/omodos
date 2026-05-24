@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package ggo.schema.v1;
+
+option go_package = "github.com/peterjbraam/ggo/pb/v1;pb";
+
+// ==========================================
+// GLOBAL LEVEL (Applies to all of ggo)
+// ==========================================
+
+// GlobalConfig: Human-editable preferences (~/.ggo/config.yaml)
+message GlobalConfig {
+  string records_dir = 1 [json_name = "records_dir"]; // e.g. ~/ai/chats/source
+  string chunks_dir = 2 [json_name = "chunks_dir"];   // e.g. ~/ai/chats/chunks
+  string ingest_dir = 3 [json_name = "ingest_dir"];   // e.g. ~/ai/chats/ingest
+}
+
+// GlobalState: Machine-managed tracking (~/.ggo/state.json)
+message GlobalState {
+  map<string, string> projects = 1;                   // "ggo" -> "/Users/braam/sw/ggo"
+  string last_project = 2 [json_name = "last_project"];
+  string export_date = 3 [json_name = "export_date"]; // Set by batch tools
+}
+
+// ==========================================
+// PROJECT LEVEL (Applies to a specific codebase)
+// ==========================================
+
+// ProjectConfig: Human-editable project rules (.ggo/ggoai-<project>/project.yaml)
+message ProjectConfig {
+  string project_name = 1 [json_name = "project_name"];
+  repeated string code_dirs = 2 [json_name = "code_dirs"]; // Repos enrolled in Time Machine
+  
+  // Model Tuning Parameters
+  string model_name = 3 [json_name = "model_name"];
+  double temperature = 4 [json_name = "temperature"];
+  double top_p = 5 [json_name = "top_p"];
+  string safety_level = 6 [json_name = "safety_level"];
+  string role = 7 [json_name = "role"];
+  
+  // Optional Project-Level Overrides
+  string records_dir = 8 [json_name = "records_dir"];
+}
+
+// ProjectState: Machine-managed volatile memory (.ggo/ggoai-<project>/state.json)
+message ProjectState {
+  string active_chat = 1 [json_name = "active_chat"];
+  repeated string included_data = 2 [json_name = "included_data"];
+  
+  // 1-Hour Context Cache Tracking
+  string gemini_cache_name = 3 [json_name = "gemini_cache_name"];
+  string gemini_cache_hash = 4 [json_name = "gemini_cache_hash"];
+}

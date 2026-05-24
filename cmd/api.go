@@ -121,16 +121,12 @@ func parseChatHistory(chatPath string) []*genai.Content {
 }
 
 func UpdateChatModel() {
-	if aiClient == nil {
-		return
-	}
-
 	modelName := "gemini-2.5-pro"
 	if ProjectViper.IsSet("model_name") {
 		modelName = ProjectViper.GetString("model_name")
 	}
 
-	projVault := GetProjectVaultDir(Project.ProjectName)
+	projVault := GetProjectVaultDir(ProjectCfg.ProjectName)
 
 	rulesPath := filepath.Join(projVault, "RULES.md")
 	rulesBytes, err := os.ReadFile(rulesPath)
@@ -167,7 +163,7 @@ func UpdateChatModel() {
 	cwd, _ := os.Getwd()
 
 	hasBaseline := false
-	for _, targetPath := range Project.IncludedData {
+	for _, targetPath := range ProjectSt.IncludedData {
 		filepath.Walk(targetPath, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
@@ -245,6 +241,10 @@ func UpdateChatModel() {
 	cachedName := ProjectViper.GetString("gemini_cache_name")
 	cachedHash := ProjectViper.GetString("gemini_cache_hash")
 
+	if aiClient == nil {
+		return
+	}
+
 	ctx := context.Background()
 	useCache := false
 
@@ -267,7 +267,7 @@ func UpdateChatModel() {
 			if err == nil && cache != nil {
 				ProjectViper.Set("gemini_cache_name", cache.Name)
 				ProjectViper.Set("gemini_cache_hash", currentHash)
-				ProjectViper.WriteConfigAs(filepath.Join(GetProjectVaultDir(Project.ProjectName), "project.yaml"))
+				ProjectViper.WriteConfigAs(filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), "project.yaml"))
 
 				cachedName = cache.Name
 				useCache = true
@@ -285,7 +285,7 @@ func UpdateChatModel() {
 	}
 
 	activeChatName := GetActiveChat()
-	chatPath := filepath.Join(GetProjectVaultDir(Project.ProjectName), "chats", activeChatName+".md")
+	chatPath := filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), "chats", activeChatName+".md")
 	history := parseChatHistory(chatPath)
 
 	var errChat error
@@ -353,7 +353,7 @@ var SendPrompt = func(ctx context.Context, prompt string) (string, error) {
 		outputCost := float64(outputTokens) * (5.00 / 1000000.0)
 		totalCost := inputCost + outputCost
 
-		logDir := GetProjectVaultDir(Project.ProjectName)
+		logDir := GetProjectVaultDir(ProjectCfg.ProjectName)
 		logPath := filepath.Join(logDir, "cost.csv")
 
 		if _, statErr := os.Stat(logPath); os.IsNotExist(statErr) {
