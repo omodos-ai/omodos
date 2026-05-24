@@ -26,8 +26,7 @@ func handleGitRemote(parts []string) {
 		return
 	}
 
-	home, _ := os.UserHomeDir()
-	vaultDir := filepath.Join(home, ".ggo", "ggoai-"+projectName)
+	vaultDir := filepath.Join(GetConfigDir(), "ggoai-"+projectName)
 	vaultRepoName := "ggoai-" + projectName
 
 	switch action {

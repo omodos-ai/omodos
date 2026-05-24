@@ -33,8 +33,22 @@
 (defvar-local ggo-response-process nil)
 (defvar-local ggo-prompt-counter 1)
 
-(defvar-local ggo-response-process nil)
-(defvar-local ggo-prompt-counter 1)
+;; ... [Skipping down to ggo-new-chat] ...
+
+(defun ggo-new-chat ()
+  (interactive)
+  (let* ((proj (ggo--get-active-project))
+         ;; FIX: Using ggo--config-dir dynamically
+         (chat-file (expand-file-name (format "ggoai-%s/current-chat.md" proj) (ggo--config-dir))))
+    (find-file chat-file)
+    (unless (eq major-mode 'ggo-chat-mode)
+      (ggo-chat-mode))
+    (when (= (buffer-size) 0)
+      (let ((ts (format-time-string "%Y-%m-%d %H:%M:%S")))
+        (insert (format "# ggo Chat\n*Project: %s*\n*Started: %s*\n\n---\n" proj ts))))
+    (when (= (point) (point-max))
+      (ggo-insert-prompt))
+    (message "Type a prompt or /command, then press C-c C-c (or Return at end of line).")))
 
 (defun ggo-start-listener ()
   (interactive)

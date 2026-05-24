@@ -28,8 +28,7 @@ func setupPipes() {
 	if Project.ProjectName == "" {
 		return
 	}
-	home, _ := os.UserHomeDir()
-	runDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "run")
+	runDir := filepath.Join(GetProjectVaultDir(Project.ProjectName), "run")
 	os.MkdirAll(runDir, 0755)
 
 	pipes := []string{
@@ -57,8 +56,7 @@ func setupPipes() {
 }
 
 func listenPromptPipe(eventChan chan<- InputEvent) {
-	home, _ := os.UserHomeDir()
-	pipePath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "run", "prompt.pipe")
+	pipePath := filepath.Join(GetProjectVaultDir(Project.ProjectName), "run", "prompt.pipe")
 	for {
 		pFile, err := os.OpenFile(pipePath, os.O_RDONLY, os.ModeNamedPipe)
 		if err != nil {
@@ -76,8 +74,7 @@ func listenPromptPipe(eventChan chan<- InputEvent) {
 }
 
 func listenControlPipe(eventChan chan<- InputEvent) {
-	home, _ := os.UserHomeDir()
-	pipePath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "run", "control.pipe")
+	pipePath := filepath.Join(GetProjectVaultDir(Project.ProjectName), "run", "control.pipe")
 	for {
 		cFile, err := os.OpenFile(pipePath, os.O_RDONLY, os.ModeNamedPipe)
 		if err != nil {
@@ -161,8 +158,7 @@ func RunREPL() {
 		readline.PcItem("gs"),
 	)
 
-	home, _ := os.UserHomeDir()
-	historyPath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "ggo_history")
+	historyPath := filepath.Join(GetProjectVaultDir(Project.ProjectName), "ggo_history")
 
 	l, err := readline.NewEx(&readline.Config{
 		Prompt:            "\033[36mggo>\033[0m ",
@@ -448,8 +444,7 @@ func handleAddRole(parts []string) {
 		roleContent = []byte(descOrFile)
 	}
 
-	home, _ := os.UserHomeDir()
-	projVault := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
+	projVault := GetProjectVaultDir(Project.ProjectName)
 	rolePath := filepath.Join(projVault, fmt.Sprintf("role-%s.md", roleName))
 
 	ExecuteTransaction("add_role_"+roleName, func(anchor string, now time.Time) error {
@@ -477,8 +472,7 @@ func handleShowRoles() {
 		activeRole = ProjectViper.GetString("role")
 	}
 
-	home, _ := os.UserHomeDir()
-	projVault := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
+	projVault := GetProjectVaultDir(Project.ProjectName)
 
 	rolesMap := make(map[string]string)
 	for k, v := range DefaultRoles {
@@ -516,8 +510,7 @@ func handleShowRoles() {
 }
 
 func handleShowCosts() {
-	home, _ := os.UserHomeDir()
-	logPath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "cost.csv")
+	logPath := filepath.Join(GetProjectVaultDir(Project.ProjectName), "cost.csv")
 
 	data, err := os.ReadFile(logPath)
 	if err != nil {
@@ -609,8 +602,7 @@ func handleSet(parts []string) {
 			InitConfig()
 		} else if isProject {
 			ProjectViper.Set(field, finalValue)
-			home, _ := os.UserHomeDir()
-			ProjectViper.WriteConfigAs(filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "project.yaml"))
+			ProjectViper.WriteConfigAs(filepath.Join(GetProjectVaultDir(Project.ProjectName), "project.yaml"))
 			InitConfig()
 
 			if field == "model_name" || field == "temperature" || field == "top_p" || field == "safety_level" || field == "role" {

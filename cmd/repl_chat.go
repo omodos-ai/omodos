@@ -36,10 +36,9 @@ func handleCC(parts []string) {
 	ActiveChatName = parts[1]
 
 	ProjectViper.Set("active_chat", ActiveChatName)
-	home, _ := os.UserHomeDir()
-	ProjectViper.WriteConfigAs(filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "project.yaml"))
+	ProjectViper.WriteConfigAs(filepath.Join(GetProjectVaultDir(Project.ProjectName), "project.yaml"))
 
-	chatDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "chats")
+	chatDir := filepath.Join(GetProjectVaultDir(Project.ProjectName), "chats")
 	os.MkdirAll(chatDir, 0755)
 
 	filePath := filepath.Join(chatDir, ActiveChatName+".md")
@@ -110,8 +109,7 @@ func buildJITContextAndSync() string {
 
 	var xmlBuilder strings.Builder
 	modifiedCount := 0
-	home, _ := os.UserHomeDir()
-	centralIncludesDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "includes")
+	centralIncludesDir := filepath.Join(GetProjectVaultDir(Project.ProjectName), "includes")
 	cwd, _ := os.Getwd()
 
 	for _, targetPath := range Project.IncludedData {
@@ -226,8 +224,7 @@ func DispatchPrompt(ctx context.Context, prompt string, source string) (string, 
 ---
 `, dateISO, activeChat, source, modelName, includesStr, cwd, slug, contextStr, prompt, response, anchor)
 
-	home, _ := os.UserHomeDir()
-	chatPath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "chats", activeChat+".md")
+	chatPath := filepath.Join(GetProjectVaultDir(Project.ProjectName), "chats", activeChat+".md")
 	f, err := os.OpenFile(chatPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err == nil {
 		f.WriteString(recordMarkdown)

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -29,8 +28,7 @@ var setExportDateCmd = &cobra.Command{
 		newDate := args[0]
 		GlobalViper.Set("export_date", newDate)
 
-		home, _ := os.UserHomeDir()
-		err := GlobalViper.WriteConfigAs(filepath.Join(home, ".ggo", "config.yaml"))
+		err := GlobalViper.WriteConfigAs(filepath.Join(GetConfigDir(), "config.yaml"))
 		if err != nil {
 			fmt.Printf("[Error] Failed to save export_date: %v\n", err)
 		} else {

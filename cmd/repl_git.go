@@ -51,9 +51,8 @@ func handleGitAddRepo(parts []string) {
 
 	// Enroll it into the Time Machine code_dirs
 	Project.CodeDirs = append(Project.CodeDirs, gitRoot)
-	home, _ := os.UserHomeDir()
 	ProjectViper.Set("code_dirs", Project.CodeDirs)
-	ProjectViper.WriteConfigAs(filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "project.yaml"))
+	ProjectViper.WriteConfigAs(filepath.Join(GetProjectVaultDir(Project.ProjectName), "project.yaml"))
 
 	fmt.Printf("\033[32m[✓] Enrolled Git repository into Time Machine:\033[0m %s\n", gitRoot)
 
@@ -64,8 +63,7 @@ func handleGitAddRepo(parts []string) {
 }
 
 func getLedgerTags() []string {
-	home, _ := os.UserHomeDir()
-	centralGitDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, ".git")
+	centralGitDir := filepath.Join(GetProjectVaultDir(Project.ProjectName), ".git")
 	out, err := exec.Command("git", "--git-dir="+centralGitDir, "tag", "--sort=creatordate").CombinedOutput()
 	var tags []string
 	if err == nil {
@@ -114,11 +112,10 @@ func handleGS(parts []string) {
 
 	fmt.Printf("\033[35m[ggo] Traveling through time to %s...\033[0m\n", tag)
 
-	home, _ := os.UserHomeDir()
 	for _, dir := range Project.CodeDirs {
 		absDir, _ := filepath.Abs(dir)
 		repoID := getRepoID(absDir)
-		shadowDir := filepath.Join(home, ".ggo", "shadow-repos", repoID)
+		shadowDir := filepath.Join(GetConfigDir(), "shadow-repos", repoID)
 
 		err := Gitsync(SyncParams{
 			Direction: "ShadowToWorking",

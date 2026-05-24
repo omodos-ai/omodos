@@ -130,8 +130,7 @@ func UpdateChatModel() {
 		modelName = ProjectViper.GetString("model_name")
 	}
 
-	home, _ := os.UserHomeDir()
-	projVault := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
+	projVault := GetProjectVaultDir(Project.ProjectName)
 
 	rulesPath := filepath.Join(projVault, "RULES.md")
 	rulesBytes, err := os.ReadFile(rulesPath)
@@ -268,7 +267,7 @@ func UpdateChatModel() {
 			if err == nil && cache != nil {
 				ProjectViper.Set("gemini_cache_name", cache.Name)
 				ProjectViper.Set("gemini_cache_hash", currentHash)
-				ProjectViper.WriteConfigAs(filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "project.yaml"))
+				ProjectViper.WriteConfigAs(filepath.Join(GetProjectVaultDir(Project.ProjectName), "project.yaml"))
 
 				cachedName = cache.Name
 				useCache = true
@@ -286,7 +285,7 @@ func UpdateChatModel() {
 	}
 
 	activeChatName := GetActiveChat()
-	chatPath := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName, "chats", activeChatName+".md")
+	chatPath := filepath.Join(GetProjectVaultDir(Project.ProjectName), "chats", activeChatName+".md")
 	history := parseChatHistory(chatPath)
 
 	var errChat error
@@ -354,8 +353,7 @@ var SendPrompt = func(ctx context.Context, prompt string) (string, error) {
 		outputCost := float64(outputTokens) * (5.00 / 1000000.0)
 		totalCost := inputCost + outputCost
 
-		home, _ := os.UserHomeDir()
-		logDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
+		logDir := GetProjectVaultDir(Project.ProjectName)
 		logPath := filepath.Join(logDir, "cost.csv")
 
 		if _, statErr := os.Stat(logPath); os.IsNotExist(statErr) {

@@ -23,24 +23,30 @@ func runScript(script string) {
 }
 
 func TestEndToEndTimeMachine(t *testing.T) {
-	// FIX: Save and restore the CWD so rsync doesn't crash in subsequent tests
+	tempDir, _ := filepath.EvalSymlinks(t.TempDir())
+
 	origDir, _ := os.Getwd()
+	os.Chdir(tempDir)
 	defer os.Chdir(origDir)
 
-	tempDir, err := os.MkdirTemp("", "ggo-e2e-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	os.Setenv("HOME", tempDir)
-	os.Chdir(tempDir)
-
-	// Explicitly guarantee Viper is not nil before anything else runs
+	// FIX 2: STRICT SANDBOXING. Wipe the globals!
+	Global = GlobalConfig{}
+	Project = ProjectConfig{}
 	ProjectViper = viper.New()
 	GlobalViper = viper.New()
 
-	// Stub the config files so InitConfig doesn't abort early
+	origConfigDir := os.Getenv("GGO_CONFIG_DIR")
+	os.Setenv("GGO_CONFIG_DIR", filepath.Join(tempDir, ".ggo"))
+	defer func() {
+		if origConfigDir == "" {
+			os.Unsetenv("GGO_CONFIG_DIR")
+		} else {
+			os.Setenv("GGO_CONFIG_DIR", origConfigDir)
+		}
+	}()
+
+	os.Setenv("HOME", tempDir)
+
 	os.MkdirAll(filepath.Join(tempDir, ".ggo", "ggoai-e2e_test"), 0755)
 	os.WriteFile(filepath.Join(tempDir, ".ggo", "global.yaml"), []byte(""), 0644)
 	os.WriteFile(filepath.Join(tempDir, ".ggo", "ggoai-e2e_test", "project.yaml"), []byte(""), 0644)

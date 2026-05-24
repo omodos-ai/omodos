@@ -110,8 +110,7 @@ func ExecuteTransaction(slug string, action func(anchor string, now time.Time) e
 	now := time.Now().UTC()
 	anchor := now.Format("20060102T150405Z")
 
-	home, _ := os.UserHomeDir()
-	centralRepoDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
+	centralRepoDir := GetProjectVaultDir(Project.ProjectName)
 	centralGitDir := filepath.Join(centralRepoDir, ".git")
 
 	isInit := false
@@ -144,13 +143,12 @@ func ExecuteTransaction(slug string, action func(anchor string, now time.Time) e
 }
 
 func SyncAllShadows(anchor, phase, msg string) {
-	home, _ := os.UserHomeDir()
 
 	for _, dir := range Project.CodeDirs {
 		absDir, _ := filepath.Abs(dir)
 		repoID := getRepoID(absDir)
 
-		shadowDir := filepath.Join(home, ".ggo", "shadow-repos", repoID)
+		shadowDir := filepath.Join(GetConfigDir(), "shadow-repos", repoID)
 
 		err := Gitsync(SyncParams{
 			Direction: "WorkingToShadow",
@@ -167,8 +165,7 @@ func SyncAllShadows(anchor, phase, msg string) {
 }
 
 func SnapshotCentral(msg, tag string) {
-	home, _ := os.UserHomeDir()
-	centralRepoDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
+	centralRepoDir := GetProjectVaultDir(Project.ProjectName)
 	gitDir := filepath.Join(centralRepoDir, ".git")
 
 	exec.Command("git", "--git-dir="+gitDir, "--work-tree="+centralRepoDir, "add", "-A").Run()

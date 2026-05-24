@@ -47,8 +47,7 @@ var unzipCmd = &cobra.Command{
 				configDir = os.Getenv("GGO_CONFIG_DIR")
 			}
 			if configDir == "" {
-				home, _ := os.UserHomeDir()
-				configDir = filepath.Join(home, ".ggo")
+				configDir = GetConfigDir()
 			}
 			viper.WriteConfigAs(filepath.Join(configDir, "config.yaml"))
 		}

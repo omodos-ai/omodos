@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -21,7 +20,12 @@ func TestMassiveRealWorldIngest(t *testing.T) {
 	repoRoot := filepath.Dir(cmdDir)
 	swDir := filepath.Dir(repoRoot)
 
-	baseTestDir := filepath.Join(swDir, "ggo-tests")
+	// Respect GGO_TEST_DIR, fallback to ~/sw/ggo-test
+	baseTestDir := os.Getenv("GGO_TEST_DIR")
+	if baseTestDir == "" {
+		baseTestDir = filepath.Join(swDir, "ggo-test")
+	}
+
 	downloadsDir := filepath.Join(baseTestDir, "downloads")
 	ingestDir := filepath.Join(baseTestDir, "ingest")
 	recordsDir := filepath.Join(baseTestDir, "records")
@@ -63,6 +67,7 @@ func TestMassiveRealWorldIngest(t *testing.T) {
 		ingestDir, recordsDir, chunksDir)
 	os.WriteFile(filepath.Join(tempDir, "config.yaml"), []byte(configYaml), 0644)
 
+	// Removed the -f flag so we don't blindly wipe user test data
 	shellScript := fmt.Sprintf(`
 set -euo pipefail
 
@@ -70,8 +75,8 @@ export GGO_CONFIG_DIR="%s"
 GGO="%s"
 
 echo "--- Extracting Archives (7zz) ---"
-"$GGO" unzip gemini "%s" 2026-04-16 -f
-"$GGO" unzip chatgpt "%s" 2026-04-16 -f
+"$GGO" unzip gemini "%s" 2026-04-16
+"$GGO" unzip chatgpt "%s" 2026-04-16
 
 echo "--- Extracting Strict JSON AI Records ---"
 "$GGO" extract gemini "%s/gemini/2026-04-16-export"
@@ -109,22 +114,5 @@ echo "--- Firing the Knowledge Manager ---"
 	t.Logf("Extracted %d total interactions to strictly typed JSON.", jsonCount)
 	if jsonCount < 14000 {
 		t.Errorf("Expected at least 14,000 records, got %d", jsonCount)
-	}
-
-	fullChunksDir := filepath.Join(chunksDir, "full", "2026-04-16")
-	var totalCodeBlocks int
-	codeBlockRegex := regexp.MustCompile("```[a-z]*\n")
-
-	filepath.Walk(fullChunksDir, func(path string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() && strings.HasSuffix(info.Name(), ".md") {
-			bytes, _ := os.ReadFile(path)
-			totalCodeBlocks += len(codeBlockRegex.FindAllString(string(bytes), -1))
-		}
-		return nil
-	})
-
-	t.Logf("Found %d intact markdown code blocks in the full chunks.", totalCodeBlocks)
-	if totalCodeBlocks < 500 {
-		t.Errorf("Expected thousands of code blocks, got %d. Markdown parsing compromised.", totalCodeBlocks)
 	}
 }

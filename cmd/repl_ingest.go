@@ -29,8 +29,7 @@ func handleContextInclude(ctx context.Context, parts []string) {
 	// We use ExecuteTransaction here just to log the ingestion event in the Time Machine ledger,
 	// but it does not affect the Git working tree.
 	ExecuteTransaction("context_include", func(anchor string, now time.Time) error {
-		home, _ := os.UserHomeDir()
-		centralRepoDir := filepath.Join(home, ".ggo", "ggoai-"+Project.ProjectName)
+		centralRepoDir := GetProjectVaultDir(Project.ProjectName)
 		centralIncludesDir := filepath.Join(centralRepoDir, "includes")
 
 		fmt.Printf("Scanning and syncing paths for AI Context...\n")
