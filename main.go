@@ -1,10 +1,23 @@
-/*
-Copyright © 2026 NAME HERE <EMAIL ADDRESS>
-*/
 package main
 
-import "github.com/peterjbraam/ggo/cmd"
+import (
+	"os"
+	"path/filepath"
+
+	"github.com/peterjbraam/ggo/cmd/ggo"
+	"github.com/peterjbraam/ggo/cmd/raggo"
+)
 
 func main() {
-	cmd.Execute()
+	binaryName := filepath.Base(os.Args[0])
+
+	switch binaryName {
+	case "raggo":
+		raggo.Execute()
+	case "ggo":
+		ggo.Execute()
+	default:
+		// Default to ggo for now if invoked as 'omodos' or standard 'go run'
+		ggo.Execute()
+	}
 }
