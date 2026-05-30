@@ -87,7 +87,7 @@ func TestUnifiedPipesAndBroadcasting(t *testing.T) {
 	// --- Test Scenario B: Input from Terminal ---
 
 	// Process the command directly as if typed in the CLI (Terminal readline = nil, fromPipe = false)
-	executeCommand(context.Background(), "Terminal Prompt", nil, false)
+	executeCommand(context.Background(), "prompt Terminal Prompt", nil, false)
 
 	// Allow IO buffers a tiny window to physically flush
 	time.Sleep(100 * time.Millisecond)

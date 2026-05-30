@@ -8,12 +8,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var projectFlag string
+
+func init() {
+	rootCmd.PersistentFlags().StringVarP(&projectFlag, "project", "p", "", "Explicitly override the project context")
+}
+
 var rootCmd = &cobra.Command{
 	Use:   "ggo",
 	Short: "Omodos AI Coding Assistant",
 	Long:  "ggo manages Git-aware AI coding interactions, Time Machine transactions, and context management.",
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		core.InitConfig()
+		core.InitConfig(projectFlag)
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		RunREPL()

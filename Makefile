@@ -25,12 +25,16 @@ test:
 	go test -v ./...
 
 build: proto
-	@echo "Building ggo..."
+	@echo "Building master binary..."
 	go build -o bin/ggo main.go
+	@echo "Creating tool symlinks in ./bin..."
+	ln -sf ggo bin/raggo
 
 install: build
-	@echo "Installing ggo to /usr/local/bin..."
+	@echo "Installing master binary to /usr/local/bin..."
 	sudo install -m 755 bin/ggo /usr/local/bin/ggo
+	@echo "Installing symlinks..."
+	sudo ln -sf /usr/local/bin/ggo /usr/local/bin/raggo
 
 clean:
 	@echo "Cleaning build directory..."

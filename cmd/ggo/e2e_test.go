@@ -70,7 +70,7 @@ func TestEndToEndTimeMachine(t *testing.T) {
 		CodeDirs:    []string{},
 	}
 
-	core.InitConfig()
+	core.InitConfig("")
 
 	t.Log("--- ggo script execution ---")
 	runScript("gr .\nset shell_cmd bash\ngl\nexit\n")

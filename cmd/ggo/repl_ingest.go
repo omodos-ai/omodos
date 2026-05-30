@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -25,6 +26,20 @@ func handleContextInclude(ctx context.Context, parts []string) {
 		return
 	}
 
+	// --- NEW: Check for .gitignore in repository roots ---
+	gitRoots := make(map[string]bool)
+	for _, p := range paths {
+		root := findGitRoot(p)
+		if root != "" && !gitRoots[root] {
+			gitRoots[root] = true
+			gitignorePath := filepath.Join(root, ".gitignore")
+			if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
+				fmt.Printf("\033[33m[Warning]\033[0m No .gitignore found in repository root (%s).\n", root)
+			}
+		}
+	}
+	// -----------------------------------------------------
+
 	var addedFiles []string
 	var ingestionBuilder strings.Builder
 
@@ -37,6 +52,8 @@ func handleContextInclude(ctx context.Context, parts []string) {
 		fmt.Printf("Scanning and syncing paths for AI Context...\n")
 
 		for _, targetPath := range paths {
+			root := findGitRoot(targetPath)
+
 			err := filepath.Walk(targetPath, func(path string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err
@@ -45,6 +62,32 @@ func handleContextInclude(ctx context.Context, parts []string) {
 				if info.IsDir() && strings.HasPrefix(info.Name(), ".") && info.Name() != "." {
 					return filepath.SkipDir
 				}
+
+				// --- NEW: Respect .gitignore and strict Git tracking ---
+				if root != "" {
+					// 1. Prune ignored directories & skip ignored files
+					checkIgnored := exec.Command("git", "check-ignore", "-q", path)
+					checkIgnored.Dir = root
+					if err := checkIgnored.Run(); err == nil {
+						// Exit status 0 means the path is ignored by Git
+						if info.IsDir() {
+							return filepath.SkipDir
+						}
+						return nil
+					}
+
+					// 2. Only include files actively tracked by Git
+					if !info.IsDir() {
+						checkTracked := exec.Command("git", "ls-files", "--error-unmatch", path)
+						checkTracked.Dir = root
+						if err := checkTracked.Run(); err != nil {
+							// Exit status non-zero means the file is untracked
+							return nil
+						}
+					}
+				}
+				// -------------------------------------------------------
+
 				if info.IsDir() {
 					return nil
 				}

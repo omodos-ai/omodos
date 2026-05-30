@@ -1,7 +1,7 @@
 package core
 
 import (
-	"github.com/google/generative-ai-go/genai"
+	"google.golang.org/genai"
 )
 
 // GlobalRuntime holds persistent system state (clients, physical paths)

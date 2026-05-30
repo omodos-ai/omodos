@@ -1,6 +1,7 @@
 package raggo
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,11 +12,23 @@ import (
 
 func TestKnowledgeManagerPipeline(t *testing.T) {
 	tempDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", origHome)
+
+	os.Setenv("GGO_CONFIG_DIR", filepath.Join(tempDir, ".ggo"))
+	defer os.Unsetenv("GGO_CONFIG_DIR")
+
+	os.MkdirAll(filepath.Join(tempDir, ".ggo"), 0755)
+
+	stateContent := fmt.Sprintf(`{"projects":{"raggo_test_project":"%s"}}`, tempDir)
+	os.WriteFile(filepath.Join(tempDir, ".ggo", "state.json"), []byte(stateContent), 0644)
+
 	recordsDir := filepath.Join(tempDir, "records")
 	ingestDir := filepath.Join(tempDir, "ingest")
 	chunksDir := filepath.Join(tempDir, "chunks")
 
-	core.InitConfig()
+	core.InitConfig("raggo_test_project")
 	core.GlobalCfg.RecordsDir = recordsDir
 	core.GlobalCfg.IngestDir = ingestDir
 	core.GlobalCfg.ChunksDir = chunksDir
@@ -29,11 +42,13 @@ func TestKnowledgeManagerPipeline(t *testing.T) {
 	chatgptDir := filepath.Join(ingestDir, "chatgpt", "2026-04-19-export")
 	os.MkdirAll(chatgptDir, 0755)
 
+	// Cleanly inject markdown backticks into the JSON payload
 	ticks := "`" + "`" + "`"
-	mockChatGPT := `[{"title": "Debug Session", "create_time": 1713520800, "current_node": "node2", "mapping": {
+	mockChatGPT := fmt.Sprintf(`[{"title": "Debug Session", "create_time": 1713520800, "current_node": "node2", "mapping": {
 		"node1": {"id": "node1", "message": {"author": {"role": "user"}, "content": {"parts": ["Fix this bug."]}}},
-		"node2": {"id": "node2", "parent": "node1", "message": {"author": {"role": "assistant"}, "content": {"parts": ["Here is the fix:\n` + ticks + `go\nfmt.Println(\"Fixed\")\n` + ticks + `"]}}}
-	}}]`
+		"node2": {"id": "node2", "parent": "node1", "message": {"author": {"role": "assistant"}, "content": {"parts": ["Here is the fix:\n%sgo\nfmt.Println(\"Fixed\")\n%s"]}}}
+	}}]`, ticks, ticks)
+
 	os.WriteFile(filepath.Join(chatgptDir, "conversations.json"), []byte(mockChatGPT), 0644)
 
 	RunGeminiExtract(recordsDir, geminiDir, false)
@@ -41,7 +56,7 @@ func TestKnowledgeManagerPipeline(t *testing.T) {
 
 	var jsonFiles []string
 	filepath.Walk(recordsDir, func(path string, info os.FileInfo, err error) error {
-		if !info.IsDir() && strings.HasSuffix(info.Name(), ".json") {
+		if err == nil && !info.IsDir() && strings.HasSuffix(info.Name(), ".json") {
 			jsonFiles = append(jsonFiles, path)
 		}
 		return nil

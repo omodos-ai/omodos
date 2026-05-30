@@ -16,7 +16,12 @@ func TestRolePersonaEngine(t *testing.T) {
 	tempHome := t.TempDir()
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tempHome)
+	os.Setenv("GGO_CONFIG_DIR", filepath.Join(tempHome, ".ggo"))
+	defer os.Unsetenv("GGO_CONFIG_DIR")
 	defer os.Setenv("HOME", origHome)
+	origDir, _ := os.Getwd()
+	os.Chdir(tempHome)
+	defer os.Chdir(origDir)
 
 	projName := "role_test_project"
 	projVault := filepath.Join(tempHome, ".ggo", "ggoai-"+projName)
@@ -30,7 +35,7 @@ func TestRolePersonaEngine(t *testing.T) {
 	os.WriteFile(statePath, []byte(stateContent), 0644)
 
 	core.ProjectCfg.ProjectName = projName
-	core.InitConfig()
+	core.InitConfig("role_test_project")
 
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
@@ -46,7 +51,7 @@ func TestRolePersonaEngine(t *testing.T) {
 	io.Copy(&buf, r)
 	output := buf.String()
 
-	if !strings.Contains(output, "Updated: role = math") {
+	if !strings.Contains(output, "Updated config: role = math") {
 		t.Errorf("Failed to confirm role update. Output:\n%s", output)
 	}
 	if !strings.Contains(output, "hacker") || !strings.Contains(output, "cyber security") {

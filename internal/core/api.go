@@ -51,16 +51,64 @@ var DefaultRoles = map[string]string{
 var AiClient *genai.Client
 var ChatSession *genai.Chat
 
+// Helper wrapper to provide transparent resilience against Google Cloud Load Balancer shedding
+func withTransientRetry(maxRetries int, operation func() error) error {
+	for i := 0; i <= maxRetries; i++ {
+		err := operation()
+		if err == nil {
+			return nil
+		}
+
+		errStr := strings.ToLower(err.Error())
+		isTransient := strings.Contains(errStr, "503") ||
+			strings.Contains(errStr, "429") ||
+			strings.Contains(errStr, "504") ||
+			strings.Contains(errStr, "unavailable") ||
+			strings.Contains(errStr, "exhausted")
+
+		if isTransient {
+			if i < maxRetries {
+				time.Sleep(time.Duration(1<<i) * time.Second) // Exponential: 1s, 2s, 4s
+				continue
+			}
+		}
+		return err // Hard failure or out of retries
+	}
+	return nil
+}
+
 func InitGemini(ctx context.Context) error {
+	// 1. Singleton pattern: Prevents test suite from destroying the Keep-Alive pool
+	if AiClient != nil {
+		UpdateChatModel()
+		return nil
+	}
+
 	apiKey := os.Getenv("GEMINI_API_KEY")
+
+	// Secure workstation fallback
 	if apiKey == "" {
-		return fmt.Errorf("GEMINI_API_KEY environment variable not set")
+		keyFile := ""
+		if GlobalViper != nil {
+			keyFile = GlobalViper.GetString("api_key_file")
+		}
+		if keyFile == "" {
+			keyFile = "~/secrets/gemini-token"
+		}
+
+		keyPath := ExpandTilde(keyFile)
+		if keyBytes, err := os.ReadFile(keyPath); err == nil {
+			apiKey = strings.TrimSpace(string(keyBytes))
+		}
+	}
+
+	if apiKey == "" {
+		return fmt.Errorf("API key missing: GEMINI_API_KEY env var is empty and %s not found", ExpandTilde("~/secrets/gemini-token"))
 	}
 
 	var err error
 	AiClient, err = genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  apiKey,
-		Backend: genai.BackendGeminiAPI,
+		APIKey: apiKey,
 	})
 	if err != nil {
 		return err
@@ -245,10 +293,6 @@ func UpdateChatModel() {
 		return
 	}
 
-	if AiClient == nil {
-		return
-	}
-
 	ctx := context.Background()
 	useCache := false
 
@@ -267,6 +311,7 @@ func UpdateChatModel() {
 				},
 			}
 
+			// Silently fail on 400 limits, allowing normal operation
 			cache, err := AiClient.Caches.Create(ctx, modelName, cacheReq)
 			if err == nil && cache != nil {
 				ProjectViper.Set("gemini_cache_name", cache.Name)
@@ -275,7 +320,6 @@ func UpdateChatModel() {
 
 				cachedName = cache.Name
 				useCache = true
-				fmt.Printf("\n\033[90m[Info] Created new 1-Hour Gemini Context Cache: %s\033[0m\n", cache.Name)
 			}
 		}
 	}
@@ -292,11 +336,7 @@ func UpdateChatModel() {
 	chatPath := filepath.Join(GetProjectVaultDir(ProjectCfg.ProjectName), "chats", activeChatName+".md")
 	history := parseChatHistory(chatPath)
 
-	var errChat error
-	ChatSession, errChat = AiClient.Chats.Create(context.Background(), modelName, config, history)
-	if errChat != nil {
-		fmt.Printf("[Warning] Failed to initialize chat session: %v\n", errChat)
-	}
+	ChatSession, _ = AiClient.Chats.Create(context.Background(), modelName, config, history)
 }
 
 var SendPrompt = func(ctx context.Context, prompt string) (string, error) {
@@ -310,7 +350,6 @@ var SendPrompt = func(ctx context.Context, prompt string) (string, error) {
 	var parts []genai.Part
 	parts = append(parts, genai.Part{Text: prompt})
 
-	// Safely load multimodal attachments if DispatchPrompt injected them into the context
 	if attachments, ok := ctx.Value("ggo_attachments").([]string); ok {
 		for _, imgPath := range attachments {
 			bytes, err := os.ReadFile(imgPath)
@@ -339,7 +378,16 @@ var SendPrompt = func(ctx context.Context, prompt string) (string, error) {
 		}
 	}
 
-	resp, err := ChatSession.SendMessage(ctx, parts...)
+	var resp *genai.GenerateContentResponse
+	var err error
+
+	// 2. Implement the transparent transient backoff loop
+	err = withTransientRetry(3, func() error {
+		var sendErr error
+		resp, sendErr = ChatSession.SendMessage(ctx, parts...)
+		return sendErr
+	})
+
 	if err != nil {
 		return "", err
 	}
@@ -424,6 +472,7 @@ func FetchAndListModels(ctx context.Context) {
 	} else if val.Kind() == reflect.Struct {
 		found := false
 		for _, fName := range []string{"Models", "Items", "Page"} {
+			// FIX: Changed val.Field.ByName to val.FieldByName
 			f := val.FieldByName(fName)
 			if f.IsValid() && f.Kind() == reflect.Slice {
 				extractNames(f)
@@ -463,7 +512,7 @@ func FetchAndListModels(ctx context.Context) {
 	}
 
 	if len(View.ModelList) == 0 {
-		View.ModelList = []string{"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-pro-exp"}
+		View.ModelList = []string{"gemini-2.5-pro", "gemini-2.5-flash", "gemini-1.5-pro-latest"}
 	}
 
 	fmt.Println("\n--- Available Gemini Models ---")

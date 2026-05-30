@@ -57,7 +57,7 @@ func init() {
 
 				// Fallback to synchronous execution
 				ctx := context.Background()
-				core.InitGemini(ctx) // <-- FIX: Spin up the API for standalone CLI usage
+				core.InitGemini(ctx) // Spin up the API for standalone CLI usage
 				executeCommand(ctx, fullCmd, nil, false)
 			},
 		}
@@ -70,7 +70,8 @@ func init() {
 		Aliases:            []string{"ask", "q"},
 		DisableFlagParsing: true,
 		Run: func(cmd *cobra.Command, args []string) {
-			fullPrompt := strings.Join(args, " ")
+			// FIX: Prepend 'prompt' to the payload so executeCommand parses it correctly
+			fullPrompt := "prompt " + strings.Join(args, " ")
 
 			if sent := sendToPipeIfRunning("prompt.pipe", fullPrompt); sent {
 				fmt.Printf("[\033[35mSent to active ggo session\033[0m] Prompt dispatched.\n")
@@ -79,7 +80,7 @@ func init() {
 
 			// Fallback to synchronous execution
 			ctx := context.Background()
-			core.InitGemini(ctx) // <-- FIX: Spin up the API for standalone CLI usage
+			core.InitGemini(ctx) // Spin up the API for standalone CLI usage
 			executeCommand(ctx, fullPrompt, nil, false)
 		},
 	}

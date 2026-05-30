@@ -16,7 +16,12 @@ func TestModelParameterTuning(t *testing.T) {
 	tempHome := t.TempDir()
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tempHome)
+	os.Setenv("GGO_CONFIG_DIR", filepath.Join(tempHome, ".ggo"))
+	defer os.Unsetenv("GGO_CONFIG_DIR")
 	defer os.Setenv("HOME", origHome)
+	origDir, _ := os.Getwd()
+	os.Chdir(tempHome)
+	defer os.Chdir(origDir)
 
 	projName := "param_test_project"
 	projDir := filepath.Join(tempHome, ".ggo", "ggoai-"+projName)
@@ -30,7 +35,7 @@ func TestModelParameterTuning(t *testing.T) {
 	os.WriteFile(statePath, []byte(stateContent), 0644)
 
 	core.ProjectCfg.ProjectName = projName
-	core.InitConfig()
+	core.InitConfig("param_test_project")
 
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
@@ -48,7 +53,7 @@ func TestModelParameterTuning(t *testing.T) {
 	io.Copy(&buf, r)
 	output := buf.String()
 
-	if !strings.Contains(output, "Updated: temperature = 0.85") {
+	if !strings.Contains(output, "Updated config: temperature = 0.85") {
 		t.Errorf("Failed to confirm temperature update. Output:\n%s", output)
 	}
 	if !strings.Contains(output, "0.85") {

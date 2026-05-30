@@ -94,7 +94,7 @@ func listenControlPipe(eventChan chan<- InputEvent) {
 }
 
 func RunREPL() {
-	core.InitConfig()
+	core.InitConfig(core.ProjectCfg.ProjectName)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -289,8 +289,6 @@ func executeCommand(ctx context.Context, line string, l *readline.Instance, from
 		return true
 	case "clear":
 		fmt.Println("-> Stub: Clearing active chat context")
-	case "list":
-		handleList(ctx, parts)
 	case "add":
 		if len(parts) > 1 && parts[1] == "role" {
 			handleAddRole(parts)
@@ -304,6 +302,18 @@ func executeCommand(ctx context.Context, line string, l *readline.Instance, from
 			handleShowParams()
 		} else if len(parts) > 1 && parts[1] == "roles" {
 			handleShowRoles()
+		} else if len(parts) > 1 && parts[1] == "projects" {
+			fmt.Println("\n--- Tracked ggo Projects ---")
+			if len(core.GlobalSt.Projects) == 0 {
+				fmt.Println("No projects tracked yet.")
+			} else {
+				for name, path := range core.GlobalSt.Projects {
+					fmt.Printf("- %-15s [%s]\n", name, path)
+				}
+			}
+			fmt.Println()
+		} else if len(parts) > 1 && parts[1] == "models" {
+			core.FetchAndListModels(ctx)
 		} else {
 			handleShow(parts)
 		}
@@ -347,8 +357,23 @@ func executeCommand(ctx context.Context, line string, l *readline.Instance, from
 		handleGD(parts)
 	case "gs":
 		handleGS(parts)
+	case "prompt":
+		// RULE 5: Explicit Prompt Command
+		if len(parts) < 2 {
+			fmt.Println("[Error] Usage: prompt <your question here>")
+			return false
+		}
+		sendAndRender(ctx, strings.Join(parts[1:], " "), fromPipe, stdout)
 	default:
-		sendAndRender(ctx, line, fromPipe, stdout)
+		// RULE 5: The Chat Barrier (No raw typos)
+		if fromPipe {
+			// Emacs naturally pipes conversational text without commands
+			sendAndRender(ctx, line, fromPipe, stdout)
+		} else {
+			fmt.Printf("\033[31m[!] Unknown command: '%s'\033[0m\n", cmd)
+			fmt.Println("    To send a prompt to the AI, prefix it with 'prompt' (e.g., 'prompt how do I fix this?')")
+			fmt.Println("    Or use the 'p' command to enter multi-line chat mode.")
+		}
 	}
 	return false
 }
@@ -457,7 +482,7 @@ func handleAddRole(parts []string) {
 
 		core.ProjectViper.Set("role", roleName)
 		core.ProjectViper.WriteConfigAs(filepath.Join(projVault, "project.yaml"))
-		core.InitConfig()
+		core.InitConfig(core.ProjectCfg.ProjectName)
 		core.UpdateChatModel()
 		return nil
 	})
@@ -647,12 +672,12 @@ func handleSet(parts []string) {
 		fmt.Printf("\033[32m[✓] Registered new workspace:\033[0m %s -> %s\n", projName, cwd)
 
 		// Pivot the active session into the new project vault
-		core.InitConfig()
+		core.InitConfig(core.ProjectCfg.ProjectName)
 		return
 	}
 
 	// Route CONFIG variables to Viper
-	isGlobalConfig := core.GlobalViper.IsSet(field) || field == "records_dir" || field == "chunks_dir" || field == "ingest_dir"
+	isGlobalConfig := core.GlobalViper.IsSet(field) || field == "records_dir" || field == "chunks_dir" || field == "ingest_dir" || field == "api_key_file"
 	isProject := core.ProjectViper.IsSet(field) || field == "project_name" || field == "shell_cmd" || field == "diff_cmd" || field == "model_name" || field == "temperature" || field == "top_p" || field == "safety_level" || field == "role"
 
 	core.ExecuteTransaction("set_"+field, func(anchor string, now time.Time) error {
@@ -660,11 +685,11 @@ func handleSet(parts []string) {
 			core.GlobalViper.Set(field, finalValue)
 			// Explicitly save using the correct path to prevent empty overwrites
 			core.GlobalViper.WriteConfigAs(filepath.Join(core.GetConfigDir(), "config.yaml"))
-			core.InitConfig()
+			core.InitConfig(core.ProjectCfg.ProjectName)
 		} else if isProject {
 			core.ProjectViper.Set(field, finalValue)
 			core.ProjectViper.WriteConfigAs(filepath.Join(core.GetProjectVaultDir(core.ProjectCfg.ProjectName), "project.yaml"))
-			core.InitConfig()
+			core.InitConfig(core.ProjectCfg.ProjectName)
 
 			if field == "model_name" || field == "temperature" || field == "top_p" || field == "safety_level" || field == "role" {
 				core.UpdateChatModel()
