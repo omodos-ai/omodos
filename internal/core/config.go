@@ -1,7 +1,6 @@
 package core
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -62,54 +61,39 @@ func InitGlobalConfig() {
 func InitConfig(overrideProject string) {
 	InitGlobalConfig()
 
-	cwd, _ := os.Getwd()
 	var activeProject string
 
+	// 1. Explicit project override passed via CLI flag (-p / --project) or parameter
 	if overrideProject != "" {
 		if path, exists := GlobalSt.Projects[overrideProject]; exists {
 			activeProject = overrideProject
 			os.Chdir(path)
 		} else {
-			fmt.Printf("[Error] Project '%s' not found in ledger. Known projects:\n", overrideProject)
-			for p := range GlobalSt.Projects {
-				fmt.Printf("  - %s\n", p)
+			fmt.Printf("[Error] Project '%s' not found in ledger. Enrolled projects:\n", overrideProject)
+			for p, path := range GlobalSt.Projects {
+				fmt.Printf("  - %-15s [%s]\n", p, path)
 			}
 			os.Exit(1)
 		}
-	}
-
-	if activeProject == "" {
-		for name, path := range GlobalSt.Projects {
-			if cwd == path {
-				activeProject = name
-				break
-			}
+	} else if GlobalSt.LastProject != "" {
+		// 2. Fall back strictly to last explicitly selected project in state.json
+		if path, exists := GlobalSt.Projects[GlobalSt.LastProject]; exists {
+			activeProject = GlobalSt.LastProject
+			os.Chdir(path)
 		}
 	}
 
+	// 3. Halt cleanly if no explicit project context is available
 	if activeProject == "" {
-		stat, _ := os.Stdin.Stat()
-		if (stat.Mode() & os.ModeCharDevice) == 0 {
-			activeProject = "global_headless"
-		} else {
-			basename := filepath.Base(cwd)
-			fmt.Printf("\n\033[33m[?] Directory not enrolled:\033[0m %s\n", cwd)
-			fmt.Printf("Adopt this directory as new project '%s'? [Y/n] ", basename)
-
-			reader := bufio.NewReader(os.Stdin)
-			resp, _ := reader.ReadString('\n')
-			resp = strings.TrimSpace(strings.ToLower(resp))
-
-			if resp == "" || resp == "y" || resp == "yes" {
-				activeProject = basename
-				GlobalSt.Projects[activeProject] = cwd
-				fmt.Printf("\033[32m[✓] Adopted new project:\033[0m %s\n\n", activeProject)
-			} else {
-				fmt.Println("\n[!] Boot sequence aborted.")
-				fmt.Println("    To join an existing project, use: ggo -p <name>")
-				os.Exit(0)
+		fmt.Println("[Error] No active project specified and no valid last_project found.")
+		fmt.Println("        Explicitly specify a project using: ggo -p <project_name>")
+		if len(GlobalSt.Projects) > 0 {
+			fmt.Println("\nEnrolled projects:")
+			for p, path := range GlobalSt.Projects {
+				fmt.Printf("  - %-15s [%s]\n", p, path)
 			}
 		}
+		os.Exit(1)
 	}
 
 	GlobalSt.LastProject = activeProject
@@ -133,7 +117,6 @@ func InitConfig(overrideProject string) {
 		ProjectCfg.ModelName = ProjectViper.GetString("model_name")
 		ProjectCfg.Role = ProjectViper.GetString("role")
 
-		// BUG FIX: Hydrate the in-memory array from the persistent config on boot
 		ProjectSt.IncludedData = ProjectViper.GetStringSlice("included_data")
 	}
 	ProjectCfg.ProjectName = activeProject
