@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,36 +18,35 @@ import (
 )
 
 func reviveLastResponse(chatName string) {
-	chatPath := filepath.Join(core.GetProjectVaultDir(core.ProjectCfg.ProjectName), "chats", chatName+".md")
-	contentBytes, err := os.ReadFile(chatPath)
-	if err != nil {
+	chatDir := filepath.Join(core.GetProjectVaultDir(core.ProjectCfg.ProjectName), "chats", chatName)
+	files, err := os.ReadDir(chatDir)
+	if err != nil || len(files) == 0 {
 		lastAPIResponse = ""
 		return
 	}
 
-	blocks := strings.Split(string(contentBytes), "## AI Interaction")
-	if len(blocks) <= 1 {
-		lastAPIResponse = ""
-		return
-	}
-
-	lastBlock := blocks[len(blocks)-1]
-	rIdx := strings.Index(lastBlock, "### Response\n")
-	if rIdx != -1 {
-		respRaw := lastBlock[rIdx+len("### Response\n"):]
-		sIdx := strings.Index(respRaw, "### State update\n")
-		if sIdx != -1 {
-			respRaw = respRaw[:sIdx]
-		} else {
-			lastDash := strings.LastIndex(respRaw, "---")
-			if lastDash != -1 {
-				respRaw = respRaw[:lastDash]
-			}
+	var jsonFiles []string
+	for _, f := range files {
+		if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") {
+			jsonFiles = append(jsonFiles, f.Name())
 		}
-		lastAPIResponse = strings.TrimSpace(respRaw)
-	} else {
-		lastAPIResponse = ""
 	}
+
+	if len(jsonFiles) == 0 {
+		lastAPIResponse = ""
+		return
+	}
+
+	sort.Strings(jsonFiles)
+	lastFile := filepath.Join(chatDir, jsonFiles[len(jsonFiles)-1])
+
+	record, err := core.ReadRecord(lastFile)
+	if err != nil || record.Output == nil {
+		lastAPIResponse = ""
+		return
+	}
+
+	lastAPIResponse = strings.TrimSpace(record.Output.Narrative)
 }
 
 func handleCC(parts []string) {
@@ -59,14 +59,10 @@ func handleCC(parts []string) {
 	core.ProjectViper.Set("active_chat", core.ActiveChatName)
 	core.ProjectViper.WriteConfigAs(filepath.Join(core.GetProjectVaultDir(core.ProjectCfg.ProjectName), "project.yaml"))
 
-	chatDir := filepath.Join(core.GetProjectVaultDir(core.ProjectCfg.ProjectName), "chats")
-	os.MkdirAll(chatDir, 0755)
+	chatDir := filepath.Join(core.GetProjectVaultDir(core.ProjectCfg.ProjectName), "chats", core.ActiveChatName)
 
-	filePath := filepath.Join(chatDir, core.ActiveChatName+".md")
-
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		header := fmt.Sprintf("# 🧠 ggo Chat: %s\n*Started: %s*\n\n", core.ActiveChatName, time.Now().Format("2006-01-02 15:04:05"))
-		os.WriteFile(filePath, []byte(header), 0644)
+	if _, err := os.Stat(chatDir); os.IsNotExist(err) {
+		os.MkdirAll(chatDir, 0755)
 		fmt.Printf("[✓] Created and activated chat: %s\n", core.ActiveChatName)
 		lastAPIResponse = ""
 	} else {
@@ -125,12 +121,19 @@ func readMultiLine(l *readline.Instance, instructions string) (string, bool) {
 	return strings.TrimSpace(sb.String()), true
 }
 
-func buildJITContextAndSync() string {
+// BaselineSync holds deferred file writes for the transactional context update
+type BaselineSync struct {
+	Path string
+	Data []byte
+}
+
+func buildJITContextAndSync() (string, []BaselineSync) {
 	if len(core.ProjectSt.IncludedData) == 0 {
-		return "-"
+		return "-", nil
 	}
 
 	var xmlBuilder strings.Builder
+	var pendingSyncs []BaselineSync
 	modifiedCount := 0
 	centralIncludesDir := filepath.Join(core.GetProjectVaultDir(core.ProjectCfg.ProjectName), "includes")
 	cwd, _ := os.Getwd()
@@ -165,17 +168,21 @@ func buildJITContextAndSync() string {
 			if string(liveBytes) != string(baselineBytes) {
 				xmlBuilder.WriteString(fmt.Sprintf("<file path=\"%s\" state=\"modified_since_last_turn\" type=\"full_text\">\n%s\n</file>\n", path, string(liveBytes)))
 				modifiedCount++
-				os.MkdirAll(filepath.Dir(baselinePath), 0755)
-				os.WriteFile(baselinePath, liveBytes, 0644)
+
+				// Defer the physical disk write until we confirm the LLM received it
+				pendingSyncs = append(pendingSyncs, BaselineSync{
+					Path: baselinePath,
+					Data: liveBytes,
+				})
 			}
 			return nil
 		})
 	}
 
 	if modifiedCount > 0 {
-		return fmt.Sprintf("<system_context>\n%s</system_context>", strings.TrimSpace(xmlBuilder.String()))
+		return fmt.Sprintf("<system_context>\n%s</system_context>", strings.TrimSpace(xmlBuilder.String())), pendingSyncs
 	}
-	return "-"
+	return "-", nil
 }
 
 func DispatchPrompt(ctx context.Context, prompt string, source string) (string, error) {
@@ -183,7 +190,7 @@ func DispatchPrompt(ctx context.Context, prompt string, source string) (string, 
 	activeChat := core.GetActiveChat()
 
 	fmt.Printf("[DEBUG-TRACE] [DISPATCH] Building JIT context...\n")
-	contextStr := buildJITContextAndSync()
+	contextStr, pendingSyncs := buildJITContextAndSync()
 	fmt.Printf("[DEBUG-TRACE] [DISPATCH] JIT context built. Length: %d\n", len(contextStr))
 
 	apiPrompt := prompt
@@ -191,10 +198,46 @@ func DispatchPrompt(ctx context.Context, prompt string, source string) (string, 
 		apiPrompt = contextStr + "\n\n" + prompt
 	}
 
+	now := time.Now().UTC()
+	dateISO := now.Format("2006-01-02T15:04:05Z")
+	filenameTime := now.Format("20060102T150405")
+	anchor := now.Format("20060102T150405Z")
+
+	modelName := "gemini-2.5-pro"
+	if core.ProjectViper.IsSet("model_name") {
+		modelName = core.ProjectViper.GetString("model_name")
+	}
+
+	slug := core.MakeSafeSlug(prompt)
+	chatDir := filepath.Join(core.GetProjectVaultDir(core.ProjectCfg.ProjectName), "chats", activeChat)
+	jsonFilename := fmt.Sprintf("%s-%s.json", filenameTime, slug)
+
+	// ==========================================
+	// STAGE 1: Write Incomplete Record Immediately
+	// ==========================================
+	record := &pb.AiRecord{
+		Metadata: &pb.Metadata{
+			TimestampUtc:      dateISO,
+			ChatId:            activeChat,
+			ModelName:         modelName,
+			TransactionAnchor: anchor,
+		},
+		Input: &pb.UserInput{
+			Narrative: apiPrompt, // Captures full prompt + context instantly
+		},
+	}
+	fmt.Printf("[DEBUG-TRACE] [DISPATCH] Saving incomplete prompt to local ledger...\n")
+	core.WriteRecord(chatDir, jsonFilename, record)
+
+	// ==========================================
+	// API EXECUTION
+	// ==========================================
 	fmt.Printf("[DEBUG-TRACE] [DISPATCH] Yielding to core.SendPrompt...\n")
 	response, err := core.SendPrompt(ctx, apiPrompt)
 	if err != nil {
 		fmt.Printf("[DEBUG-TRACE] [DISPATCH] core.SendPrompt failed: %v\n", err)
+		// Return without updating baseline, leaving desk state dirty for the next attempt.
+		// The incomplete prompt safely remains on disk.
 		return "", err
 	}
 	fmt.Printf("[DEBUG-TRACE] [DISPATCH] core.SendPrompt succeeded. Response length: %d\n", len(response))
@@ -203,84 +246,19 @@ func DispatchPrompt(ctx context.Context, prompt string, source string) (string, 
 	fmt.Printf("[DEBUG-TRACE] [DISPATCH] Auto-copying to clipboard...\n")
 	autoCopyToClipboard(response)
 
-	now := time.Now().UTC()
-	dateISO := now.Format("2006-01-02T15:04:05Z")
-	filenameTime := now.Format("20060102T150405")
-	anchor := now.Format("20060102T150405Z")
-	year := now.Format("2006")
-	month := now.Format("01")
-	cwd, _ := os.Getwd()
-
-	modelName := "gemini-2.5-pro"
-	if core.ProjectViper.IsSet("model_name") {
-		modelName = core.ProjectViper.GetString("model_name")
+	// ==========================================
+	// STAGE 2: Success - Overwrite Record & Commit Context
+	// ==========================================
+	fmt.Printf("[DEBUG-TRACE] [DISPATCH] API Success. Overwriting record and flushing context baselines...\n")
+	record.Output = &pb.AIResponse{
+		Narrative: response,
 	}
+	core.WriteRecord(chatDir, jsonFilename, record)
 
-	var includesBuilder strings.Builder
-	if len(core.ProjectSt.IncludedData) == 0 {
-		includesBuilder.WriteString("-\n")
-	} else {
-		for _, inc := range core.ProjectSt.IncludedData {
-			includesBuilder.WriteString("- " + inc + "\n")
-		}
-	}
-	includesStr := strings.TrimSpace(includesBuilder.String())
-	slug := core.MakeSafeSlug(prompt)
-
-	recordMarkdown := fmt.Sprintf(`## AI Interaction
-### Date
-%s
-### Chat
-%s
-### Source
-%s / %s
-### Includes
-%s
-### Current working directory
-%s
-### Subject
-%s
-### Context
-%s
-### Prompt
-%s
-
-### Response
-%s
-
-### State update
-- Transaction Anchor: %s
-
----
-`, dateISO, activeChat, source, modelName, includesStr, cwd, slug, contextStr, prompt, response, anchor)
-
-	fmt.Printf("[DEBUG-TRACE] [DISPATCH] Writing to Chat Markdown Ledger...\n")
-	chatPath := filepath.Join(core.GetProjectVaultDir(core.ProjectCfg.ProjectName), "chats", activeChat+".md")
-	f, err := os.OpenFile(chatPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err == nil {
-		f.WriteString(recordMarkdown)
-		f.Close()
-	}
-
-	if core.GlobalCfg.RecordsDir != "" {
-		fmt.Printf("[DEBUG-TRACE] [DISPATCH] Writing to JSON records dir...\n")
-		recordsDir := filepath.Join(core.GlobalCfg.RecordsDir, year, month)
-		jsonFilename := fmt.Sprintf("%s-%s.json", filenameTime, slug)
-
-		record := &pb.AiRecord{
-			Metadata: &pb.Metadata{
-				TimestampUtc: dateISO,
-				ChatId:       activeChat,
-				ModelName:    modelName,
-			},
-			Input: &pb.UserInput{
-				Narrative: prompt,
-			},
-			Output: &pb.AIResponse{
-				Narrative: response,
-			},
-		}
-		core.WriteRecord(recordsDir, jsonFilename, record)
+	// Flush the transactional baseline syncs to disk now that the LLM has them
+	for _, sync := range pendingSyncs {
+		os.MkdirAll(filepath.Dir(sync.Path), 0755)
+		os.WriteFile(sync.Path, sync.Data, 0644)
 	}
 
 	cleanResp := strings.ReplaceAll(response, "\x00", "")

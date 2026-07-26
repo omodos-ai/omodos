@@ -3,6 +3,7 @@ package ggo
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -55,21 +56,24 @@ func TestLiveEndToEndChatAndContext(t *testing.T) {
 	script1 := "inc " + testFile + "\ncc live_test_chat\nprompt What is the current STATUS in system_config.txt? Answer with just the value.\nexit\n"
 	runScript(script1)
 
-	chatPath := filepath.Join(core.GetProjectVaultDir(core.ProjectCfg.ProjectName), "chats", "live_test_chat.md")
-
-	contentBytes, err := os.ReadFile(chatPath)
-	if err != nil {
-		t.Fatalf("Failed to find generated chat file: %v", err)
+	chatDir := filepath.Join(core.GetProjectVaultDir(core.ProjectCfg.ProjectName), "chats", "live_test_chat")
+	files, err := os.ReadDir(chatDir)
+	if err != nil || len(files) == 0 {
+		t.Fatalf("Failed to find generated chat directory or files: %v", err)
 	}
 
-	blocks := strings.Split(string(contentBytes), "## AI Interaction")
-	if len(blocks) < 2 {
-		t.Fatalf("Expected at least one AI interaction block. (If this failed, the 5-retry backoff was defeated by Google)")
+	var jsonFiles []string
+	for _, f := range files {
+		if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") {
+			jsonFiles = append(jsonFiles, f.Name())
+		}
 	}
-	stage1Block := blocks[len(blocks)-1]
+	sort.Strings(jsonFiles)
+	
+	record1, _ := core.ReadRecord(filepath.Join(chatDir, jsonFiles[0]))
 
-	if !strings.Contains(strings.ToUpper(stage1Block), "OFFLINE") {
-		t.Fatalf("Gemini failed to read the baseline context. Expected 'OFFLINE' in response. Got:\n%s", stage1Block)
+	if !strings.Contains(strings.ToUpper(record1.Output.Narrative), "OFFLINE") {
+		t.Fatalf("Gemini failed to read the baseline context. Expected 'OFFLINE' in response. Got:\n%s", record1.Output.Narrative)
 	}
 
 	// --- Stage 2: The JIT Full-State Modification ---
@@ -79,24 +83,26 @@ func TestLiveEndToEndChatAndContext(t *testing.T) {
 	script2 := "cc live_test_chat\nprompt I just updated the config on disk. What is the STATUS now? Answer with just the value.\nexit\n"
 	runScript(script2)
 
-	contentBytes, _ = os.ReadFile(chatPath)
-	blocks = strings.Split(string(contentBytes), "## AI Interaction")
-	if len(blocks) < 3 {
-		t.Fatalf("Expected at least two AI interaction blocks. (If this failed, the 5-retry backoff was defeated by Google)")
+	files, _ = os.ReadDir(chatDir)
+	jsonFiles = nil
+	for _, f := range files {
+		if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") {
+			jsonFiles = append(jsonFiles, f.Name())
+		}
 	}
-	stage2Block := blocks[len(blocks)-1]
+	sort.Strings(jsonFiles)
 
-	if !strings.Contains(stage2Block, "<system_context>") {
-		t.Fatalf("Expected XML <system_context> injection, but it was missing.")
+	if len(jsonFiles) < 2 {
+		t.Fatalf("Expected at least two JSON interaction files.")
 	}
 
-	rIdx := strings.Index(stage2Block, "### Response\n")
-	if rIdx == -1 {
-		t.Fatalf("No response found in stage 2 block")
-	}
-	responseStr := stage2Block[rIdx:]
+	record2, _ := core.ReadRecord(filepath.Join(chatDir, jsonFiles[len(jsonFiles)-1]))
 
-	if !strings.Contains(strings.ToUpper(responseStr), "ONLINE") {
-		t.Fatalf("Gemini failed to comprehend the JIT XML update. Expected 'ONLINE'. Response block:\n%s", responseStr)
+	if !strings.Contains(record2.Input.Narrative, "<system_context>") {
+		t.Fatalf("Expected XML <system_context> injection, but it was missing in the logged prompt.")
+	}
+
+	if !strings.Contains(strings.ToUpper(record2.Output.Narrative), "ONLINE") {
+		t.Fatalf("Gemini failed to comprehend the JIT XML update. Expected 'ONLINE'. Response block:\n%s", record2.Output.Narrative)
 	}
 }

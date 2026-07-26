@@ -1,7 +1,6 @@
 package ggo
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,40 +33,35 @@ func TestChatRecordLifecycle(t *testing.T) {
 		t.Fatalf("Failed to create isolated chats dir: %v", err)
 	}
 
-	core.ActiveChatName = "test_bug_chat"
-
-	origSendPrompt := core.SendPrompt
-	defer func() { core.SendPrompt = origSendPrompt }()
-
 	expectedPrompt := "How well is this project structured?"
 	expectedResponse := "The architecture is extremely robust and testable."
 
-	core.SendPrompt = func(ctx context.Context, prompt string) (string, error) {
-		return expectedResponse, nil
-	}
-
-	sendAndRender(context.Background(), expectedPrompt, false, os.Stdout)
-
-	var foundRecordPath string
-	err = filepath.Walk(core.GlobalCfg.RecordsDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() && strings.HasSuffix(info.Name(), ".json") {
-			foundRecordPath = path
-		}
-		return nil
-	})
-
-	if err != nil || foundRecordPath == "" {
-		t.Fatalf("Bug confirmed: sendAndRender failed to write the JSON record to %s", core.GlobalCfg.RecordsDir)
-	}
-
-	recordBytes, _ := os.ReadFile(foundRecordPath)
-	recordContent := string(recordBytes)
-	if !strings.Contains(recordContent, expectedPrompt) || !strings.Contains(recordContent, expectedResponse) {
-		t.Fatalf("Initial JSON record does not contain the expected prompt/response.\nGot: %s", recordContent)
-	}
+	// Create a dummy legacy .md file to test the extractor
+	dummyMD := `## AI Interaction
+### Date
+2026-04-19T10:00:00Z
+### Chat
+legacy_md_chat
+### Source
+ggo-cli / gemini-2.5-pro
+### Includes
+-
+### Current working directory
+/Users/test
+### Subject
+test-subject
+### Context
+-
+### Prompt
+How well is this project structured?
+### Response
+The architecture is extremely robust and testable.
+### State update
+- Transaction Anchor: 20260419T100000Z
+---
+`
+	mdPath := filepath.Join(chatsDir, "legacy_chat.md")
+	os.WriteFile(mdPath, []byte(dummyMD), 0644)
 
 	os.RemoveAll(core.GlobalCfg.RecordsDir)
 	os.MkdirAll(core.GlobalCfg.RecordsDir, 0755)

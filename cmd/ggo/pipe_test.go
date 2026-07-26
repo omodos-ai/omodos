@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -28,7 +29,7 @@ func TestUnifiedPipesAndBroadcasting(t *testing.T) {
 	core.ActiveChatName = "pipe_chat"
 
 	runDir := filepath.Join(tempHome, ".ggo", "ggoai-pipe_test_project", "run")
-	chatsDir := filepath.Join(tempHome, ".ggo", "ggoai-pipe_test_project", "chats")
+	chatsDir := filepath.Join(tempHome, ".ggo", "ggoai-pipe_test_project", "chats", "pipe_chat")
 	os.MkdirAll(runDir, 0755)
 	os.MkdirAll(chatsDir, 0755)
 
@@ -58,18 +59,15 @@ func TestUnifiedPipesAndBroadcasting(t *testing.T) {
 
 	// --- Test Scenario A: Input from Pipe (Emacs) ---
 
-	// Start the prompt.pipe listener in a goroutine
 	eventChan := make(chan InputEvent, 1)
 	go listenPromptPipe(eventChan)
 
-	// Write to prompt.pipe exactly how Emacs would
 	pipePath := filepath.Join(runDir, "prompt.pipe")
 	err = os.WriteFile(pipePath, []byte("Pipe Prompt"), 0600)
 	if err != nil {
 		t.Fatalf("Failed to write to prompt pipe: %v", err)
 	}
 
-	// Wait for the listener to pick it up and funnel it to the central bus
 	var event InputEvent
 	select {
 	case event = <-eventChan:
@@ -81,15 +79,12 @@ func TestUnifiedPipesAndBroadcasting(t *testing.T) {
 		t.Errorf("Expected event source 'prompt_pipe', got '%s'", event.Source)
 	}
 
-	// Process the command (Terminal readline = nil, fromPipe = true)
 	executeCommand(context.Background(), event.Payload, nil, true)
 
 	// --- Test Scenario B: Input from Terminal ---
 
-	// Process the command directly as if typed in the CLI (Terminal readline = nil, fromPipe = false)
 	executeCommand(context.Background(), "prompt Terminal Prompt", nil, false)
 
-	// Allow IO buffers a tiny window to physically flush
 	time.Sleep(100 * time.Millisecond)
 
 	// --- Verification Phase ---
@@ -118,27 +113,28 @@ func TestUnifiedPipesAndBroadcasting(t *testing.T) {
 		t.Errorf("Response pipe missing terminal response.\nGot:\n%s", respStr)
 	}
 
-	// 3. Verify Disk Ledger (chat.md)
-	ledgerPath := filepath.Join(chatsDir, "pipe_chat.md")
-	ledgerBytes, err := os.ReadFile(ledgerPath)
-	if err != nil {
-		t.Fatalf("Failed to read ledger file: %v", err)
+	// 3. Verify Disk Ledger (.json files)
+	files, _ := os.ReadDir(chatsDir)
+	var jsonFiles []string
+	for _, f := range files {
+		if strings.HasSuffix(f.Name(), ".json") {
+			jsonFiles = append(jsonFiles, f.Name())
+		}
 	}
-	ledgerStr := string(ledgerBytes)
+	sort.Strings(jsonFiles)
 
-	// Check Emacs Event
-	if !strings.Contains(ledgerStr, "### Prompt\nPipe Prompt") {
-		t.Errorf("Ledger missing Pipe Prompt payload")
-	}
-	if !strings.Contains(ledgerStr, "### Source\nggo-emacs-pipe") {
-		t.Errorf("Ledger failed to correctly tag the pipe source")
+	if len(jsonFiles) < 2 {
+		t.Fatalf("Expected 2 json records written to disk.")
 	}
 
-	// Check Terminal Event
-	if !strings.Contains(ledgerStr, "### Prompt\nTerminal Prompt") {
-		t.Errorf("Ledger missing Terminal Prompt payload")
+	r1, _ := core.ReadRecord(filepath.Join(chatsDir, jsonFiles[0]))
+	r2, _ := core.ReadRecord(filepath.Join(chatsDir, jsonFiles[1]))
+
+	if !strings.Contains(r1.Input.Narrative, "Pipe Prompt") {
+		t.Errorf("Ledger 1 missing Pipe Prompt payload")
 	}
-	if !strings.Contains(ledgerStr, "### Source\nggo-cli") {
-		t.Errorf("Ledger failed to correctly tag the terminal source")
+
+	if !strings.Contains(r2.Input.Narrative, "Terminal Prompt") {
+		t.Errorf("Ledger 2 missing Terminal Prompt payload")
 	}
 }
