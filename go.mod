@@ -8,6 +8,7 @@ require (
 	github.com/chzyer/readline v1.5.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
+	github.com/yuin/goldmark v1.7.1
 	google.golang.org/genai v1.52.1
 	google.golang.org/protobuf v1.36.11
 	mvdan.cc/sh/v3 v3.13.0

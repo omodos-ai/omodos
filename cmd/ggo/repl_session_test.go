@@ -1,84 +1,133 @@
 package ggo
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/peterjbraam/ggo/internal/core"
 	"github.com/spf13/viper"
 )
 
-func TestApplyMacroEditsUnit(t *testing.T) {
-	// 1. Sandbox the environment
-	tempHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempHome)
-	defer os.Setenv("HOME", origHome)
-
-	// Mock config so the core.ExecuteTransaction hook inside ApplyMacroEdits succeeds
-	core.ProjectViper = viper.New()
-	core.GlobalViper = viper.New()
-	core.ProjectCfg.ProjectName = "macro_unit_test"
-	core.ProjectCfg.CodeDirs = []string{} // <-- Added to prevent test leakage!
-	os.MkdirAll(filepath.Join(tempHome, ".ggo", "ggoai-macro_unit_test"), 0755)
-
-	// 2. Setup mock file paths
-	file1Path := filepath.Join(tempHome, "test_file_1.txt")
-	file2Path := filepath.Join(tempHome, "nested", "dir", "test_file_2.go")
-
-	// 3. Prepare mock LLM response with conversational text and XML blocks
-	mockResponse := fmt.Sprintf(`
+func TestExtractPendingFiles(t *testing.T) {
+	mockResponse := `
 Sure, here are the files you requested.
 
-<file path="%s">
-Hello World!
-This is a test file.
-</file>
-
-And the second one in a nested directory:
-
-<file path="%s">
+<file path="src/main.go">
 package main
 func main() {
 	println("hello")
 }
 </file>
 
-Let me know if you need anything else!
-`, file1Path, file2Path)
+And a config file:
 
-	// 4. Action
-	count, err := ApplyMacroEdits(mockResponse)
-	if err != nil {
-		t.Fatalf("ApplyMacroEdits returned an unexpected error: %v", err)
-	}
-	if count != 2 {
-		t.Fatalf("ApplyMacroEdits reported %d files written, expected 2", count)
-	}
+<file path="config.yaml">
+port: 8080
+</file>
+`
 
-	// 5. Verification
-	content1, err := os.ReadFile(file1Path)
-	if err != nil {
-		t.Fatalf("Failed to read file 1 from disk: %v", err)
-	}
-	if string(content1) != "Hello World!\nThis is a test file." {
-		t.Errorf("File 1 content mismatch.\nGot: %q", string(content1))
+	files := extractPendingFiles(mockResponse)
+	if len(files) != 2 {
+		t.Fatalf("Expected 2 files extracted, got %d", len(files))
 	}
 
-	content2, err := os.ReadFile(file2Path)
-	if err != nil {
-		t.Fatalf("Failed to read file 2 from disk: %v", err)
+	if files[0].Path != "src/main.go" {
+		t.Errorf("Expected path src/main.go, got %s", files[0].Path)
 	}
-	if string(content2) != "package main\nfunc main() {\n\tprintln(\"hello\")\n}" {
-		t.Errorf("File 2 content mismatch.\nGot: %q", string(content2))
+	if !strings.Contains(files[0].Content, "println(\"hello\")") {
+		t.Errorf("Content mismatch for file 1: %s", files[0].Content)
+	}
+
+	if files[1].Path != "config.yaml" {
+		t.Errorf("Expected path config.yaml, got %s", files[1].Path)
+	}
+	if !strings.Contains(files[1].Content, "port: 8080") {
+		t.Errorf("Content mismatch for file 2: %s", files[1].Content)
 	}
 }
 
-func TestLiveApplyMacroEdits(t *testing.T) {
+func TestFileSubsystemUnit(t *testing.T) {
+	// 1. Sandbox setup
+	tempHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", origHome)
+
+	core.ProjectViper = viper.New()
+	core.GlobalViper = viper.New()
+	core.ProjectCfg.ProjectName = "file_subsystem_test"
+	core.ProjectCfg.CodeDirs = []string{}
+
+	projVault := filepath.Join(tempHome, ".ggo", "ggoai-file_subsystem_test")
+	os.MkdirAll(projVault, 0755)
+
+	// Create git repo so ExecuteTransaction succeeds
+	core.ExecuteTransaction("init_test", func(a string, n time.Time) error { return nil })
+
+	file1Path := filepath.Join(tempHome, "test_file_1.txt")
+	file2Path := filepath.Join(tempHome, "nested", "test_file_2.go")
+
+	// Inject a simulated AI response into the global volatile memory
+	lastAPIResponse = fmt.Sprintf(`
+<file path="%s">
+Test Data 1
+</file>
+<file path="%s">
+Test Data 2
+</file>
+`, file1Path, file2Path)
+
+	// Test A: File List (fl)
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	handleFL()
+
+	w.Close()
+	os.Stdout = oldStdout
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	if !strings.Contains(output, "Pending AI File Edits") || !strings.Contains(output, "test_file_1.txt") {
+		t.Errorf("'fl' command failed to list pending files. Output:\n%s", output)
+	}
+
+	// Test B: Targeted File Write (fw 0)
+	handleFW([]string{"0"})
+
+	if _, err := os.Stat(file1Path); os.IsNotExist(err) {
+		t.Errorf("'fw 0' failed to write file 1 to disk.")
+	}
+	if _, err := os.Stat(file2Path); err == nil {
+		t.Errorf("'fw 0' incorrectly wrote file 2 when it should have only targeted index 0.")
+	}
+
+	// Test C: File Merge (fm 1)
+	core.ProjectViper.Set("diff_cmd", "diff -u") // Set a safe, non-blocking diff command
+	handleFM([]string{"1"})
+
+	proposedPath := file2Path + ".proposed"
+	if _, err := os.Stat(proposedPath); os.IsNotExist(err) {
+		t.Errorf("'fm 1' failed to generate the .proposed file for the merge workflow.")
+	}
+
+	// Test D: File Cancel (fc)
+	handleFC()
+	if lastAPIResponse != "" {
+		t.Errorf("'fc' failed to clear the pending response queue.")
+	}
+}
+
+func TestLiveFileWriteWorkflow(t *testing.T) {
 	if os.Getenv("GEMINI_API_KEY") == "" {
 		userHome, _ := os.UserHomeDir()
 		if _, err := os.Stat(filepath.Join(userHome, "secrets", "gemini-token")); os.IsNotExist(err) {
@@ -86,7 +135,7 @@ func TestLiveApplyMacroEdits(t *testing.T) {
 		}
 	}
 
-	// 1. Sandbox the environment
+	// 1. Sandbox setup
 	tempHome := t.TempDir()
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tempHome)
@@ -94,61 +143,50 @@ func TestLiveApplyMacroEdits(t *testing.T) {
 
 	core.ProjectViper = viper.New()
 	core.GlobalViper = viper.New()
-	core.ProjectCfg.ProjectName = "live_macro_test"
-	core.ProjectCfg.CodeDirs = []string{} // <-- Added to prevent test leakage!
-	core.ActiveChatName = "macro_chat"
+	core.ProjectCfg.ProjectName = "live_fw_test"
+	core.ProjectCfg.CodeDirs = []string{}
+	core.ActiveChatName = "live_chat"
 
-	// Create required directories so core.UpdateChatModel can write GEMINI.md
-	projDir := filepath.Join(tempHome, ".ggo", "ggoai-live_macro_test")
-	os.MkdirAll(filepath.Join(projDir, "chats"), 0755)
+	os.MkdirAll(filepath.Join(tempHome, ".ggo", "ggoai-live_fw_test", "chats"), 0755)
 
-	// 2. Initialize real Gemini API
 	ctx := context.Background()
 	err := core.InitGemini(ctx)
 	if err != nil {
 		t.Fatalf("Failed to initialize Gemini: %v", err)
 	}
 
-	// 3. Setup target paths for the LLM to write to
-	file1Path := filepath.Join(tempHome, "live_target_1.txt")
-	file2Path := filepath.Join(tempHome, "live_target_2.txt")
+	file1Path := filepath.Join(tempHome, "live_fw_target_1.txt")
+	file2Path := filepath.Join(tempHome, "live_fw_target_2.txt")
 
-	// 4. Action: Send a strict prompt testing the XML schema
+	// 2. Action: Prompt the AI to generate files
 	prompt := fmt.Sprintf(`I need you to generate two text files using your strict XML <file> schema.
 Do not use markdown codeblocks inside the XML.
-1. Path: "%s", Content: "Live Test Data 1"
-2. Path: "%s", Content: "Live Test Data 2"`, file1Path, file2Path)
+1. Path: "%s", Content: "Live Target 1"
+2. Path: "%s", Content: "Live Target 2"`, file1Path, file2Path)
 
-	// Send to LLM
 	lastAPIResponse = ""
 	sendAndRender(ctx, prompt, false, os.Stdout)
 	if lastAPIResponse == "" {
 		t.Skip("Skipping due to Google API 503 error")
 	}
 
-	// Apply the edits from the in-memory response buffer
-	count, err := ApplyMacroEdits(lastAPIResponse)
-	if err != nil {
-		t.Fatalf("ApplyMacroEdits failed on live response: %v\nResponse was:\n%s", err, lastAPIResponse)
-	}
-	if count != 2 {
-		t.Fatalf("Expected exactly 2 files extracted from live response, got %d.\nResponse was:\n%s", count, lastAPIResponse)
-	}
+	// 3. Action: Apply all files (fw with no args)
+	handleFW([]string{})
 
-	// 5. Verification
+	// 4. Verification
 	content1, err := os.ReadFile(file1Path)
 	if err != nil {
 		t.Fatalf("Failed to read live generated file 1: %v", err)
 	}
-	if !strings.Contains(string(content1), "Live Test Data 1") {
-		t.Errorf("Live generated file 1 did not contain expected text. Got: %q", string(content1))
+	if !strings.Contains(string(content1), "Live Target 1") {
+		t.Errorf("Live generated file 1 content mismatch. Got: %q", string(content1))
 	}
 
 	content2, err := os.ReadFile(file2Path)
 	if err != nil {
 		t.Fatalf("Failed to read live generated file 2: %v", err)
 	}
-	if !strings.Contains(string(content2), "Live Test Data 2") {
-		t.Errorf("Live generated file 2 did not contain expected text. Got: %q", string(content2))
+	if !strings.Contains(string(content2), "Live Target 2") {
+		t.Errorf("Live generated file 2 content mismatch. Got: %q", string(content2))
 	}
 }

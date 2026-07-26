@@ -19,7 +19,8 @@ var rootCmd = &cobra.Command{
 	Short: "Omodos AI Knowledge Manager",
 	Long:  "raggo ingests, extracts, and chunks AI data exports for NotebookLM and Vertex.",
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		core.InitConfig(projectFlag)
+		// Initialize only the global config to prevent project enrollment traps
+		core.InitGlobalConfig()
 	},
 }
 

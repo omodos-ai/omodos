@@ -68,7 +68,9 @@ func withTransientRetry(maxRetries int, operation func() error) error {
 
 		if isTransient {
 			if i < maxRetries {
-				time.Sleep(time.Duration(1<<i) * time.Second) // Exponential: 1s, 2s, 4s
+				backoff := time.Duration(1<<i) * time.Second // Exponential: 1s, 2s, 4s, 8s, 16s...
+				fmt.Printf("\n\033[33m[Retry %d/%d] API overloaded/shedding detected. Retrying in %v...\033[0m\n", i+1, maxRetries, backoff)
+				time.Sleep(backoff)
 				continue
 			}
 		}
@@ -78,7 +80,6 @@ func withTransientRetry(maxRetries int, operation func() error) error {
 }
 
 func InitGemini(ctx context.Context) error {
-	// 1. Singleton pattern: Prevents test suite from destroying the Keep-Alive pool
 	if AiClient != nil {
 		UpdateChatModel()
 		return nil
@@ -86,7 +87,6 @@ func InitGemini(ctx context.Context) error {
 
 	apiKey := os.Getenv("GEMINI_API_KEY")
 
-	// Secure workstation fallback
 	if apiKey == "" {
 		keyFile := ""
 		if GlobalViper != nil {
@@ -311,7 +311,6 @@ func UpdateChatModel() {
 				},
 			}
 
-			// Silently fail on 400 limits, allowing normal operation
 			cache, err := AiClient.Caches.Create(ctx, modelName, cacheReq)
 			if err == nil && cache != nil {
 				ProjectViper.Set("gemini_cache_name", cache.Name)
@@ -340,7 +339,9 @@ func UpdateChatModel() {
 }
 
 var SendPrompt = func(ctx context.Context, prompt string) (string, error) {
+	fmt.Printf("[DEBUG-TRACE] [API] Entering core.SendPrompt\n")
 	if ChatSession == nil {
+		fmt.Printf("[DEBUG-TRACE] [API] ERROR: ChatSession is nil\n")
 		return "", fmt.Errorf("AI session not initialized")
 	}
 
@@ -351,6 +352,7 @@ var SendPrompt = func(ctx context.Context, prompt string) (string, error) {
 	parts = append(parts, genai.Part{Text: prompt})
 
 	if attachments, ok := ctx.Value("ggo_attachments").([]string); ok {
+		fmt.Printf("[DEBUG-TRACE] [API] Processing %d image/pdf attachments\n", len(attachments))
 		for _, imgPath := range attachments {
 			bytes, err := os.ReadFile(imgPath)
 			if err != nil {
@@ -381,17 +383,21 @@ var SendPrompt = func(ctx context.Context, prompt string) (string, error) {
 	var resp *genai.GenerateContentResponse
 	var err error
 
-	// 2. Implement the transparent transient backoff loop
-	err = withTransientRetry(3, func() error {
+	fmt.Printf("[DEBUG-TRACE] [API] Initiating Google GenAI SendMessage loop...\n")
+	err = withTransientRetry(5, func() error {
+		fmt.Printf("[DEBUG-TRACE] [API] Firing network request to Gemini...\n")
 		var sendErr error
 		resp, sendErr = ChatSession.SendMessage(ctx, parts...)
+		fmt.Printf("[DEBUG-TRACE] [API] Network request returned. Err: %v\n", sendErr)
 		return sendErr
 	})
 
 	if err != nil {
+		fmt.Printf("[DEBUG-TRACE] [API] Returning fatal error up stack: %v\n", err)
 		return "", err
 	}
 
+	fmt.Printf("[DEBUG-TRACE] [API] Success. Spawning cost logging goroutine...\n")
 	go func(r *genai.GenerateContentResponse) {
 		if r == nil || r.UsageMetadata == nil {
 			return
@@ -425,6 +431,7 @@ var SendPrompt = func(ctx context.Context, prompt string) (string, error) {
 		}
 	}(resp)
 
+	fmt.Printf("[DEBUG-TRACE] [API] Exiting SendPrompt cleanly.\n")
 	return resp.Text(), nil
 }
 
@@ -472,7 +479,6 @@ func FetchAndListModels(ctx context.Context) {
 	} else if val.Kind() == reflect.Struct {
 		found := false
 		for _, fName := range []string{"Models", "Items", "Page"} {
-			// FIX: Changed val.Field.ByName to val.FieldByName
 			f := val.FieldByName(fName)
 			if f.IsValid() && f.Kind() == reflect.Slice {
 				extractNames(f)

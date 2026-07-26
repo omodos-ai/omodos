@@ -51,6 +51,7 @@ func TestLiveEndToEndChatAndContext(t *testing.T) {
 	// --- Stage 1: Baseline Creation ---
 	os.WriteFile(testFile, []byte("STATUS=OFFLINE\nVERSION=1.0"), 0644)
 
+	lastAPIResponse = "" // strict reset
 	script1 := "inc " + testFile + "\ncc live_test_chat\nprompt What is the current STATUS in system_config.txt? Answer with just the value.\nexit\n"
 	runScript(script1)
 
@@ -63,11 +64,7 @@ func TestLiveEndToEndChatAndContext(t *testing.T) {
 
 	blocks := strings.Split(string(contentBytes), "## AI Interaction")
 	if len(blocks) < 2 {
-		// Prevent ugly out-of-bounds slice panics if the API completely fails
-		if lastAPIResponse == "" {
-			t.Skip("Skipping test: API critically failed (likely Auth/Quota)")
-		}
-		t.Fatalf("Expected at least one AI interaction block.")
+		t.Fatalf("Expected at least one AI interaction block. (If this failed, the 5-retry backoff was defeated by Google)")
 	}
 	stage1Block := blocks[len(blocks)-1]
 
@@ -78,16 +75,14 @@ func TestLiveEndToEndChatAndContext(t *testing.T) {
 	// --- Stage 2: The JIT Full-State Modification ---
 	os.WriteFile(testFile, []byte("STATUS=ONLINE\nVERSION=2.0"), 0644)
 
+	lastAPIResponse = "" // strict reset
 	script2 := "cc live_test_chat\nprompt I just updated the config on disk. What is the STATUS now? Answer with just the value.\nexit\n"
 	runScript(script2)
 
 	contentBytes, _ = os.ReadFile(chatPath)
 	blocks = strings.Split(string(contentBytes), "## AI Interaction")
 	if len(blocks) < 3 {
-		if lastAPIResponse == "" {
-			t.Skip("Skipping test: API critically failed (likely Auth/Quota)")
-		}
-		t.Fatalf("Expected at least two AI interaction blocks.")
+		t.Fatalf("Expected at least two AI interaction blocks. (If this failed, the 5-retry backoff was defeated by Google)")
 	}
 	stage2Block := blocks[len(blocks)-1]
 

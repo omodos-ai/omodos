@@ -118,12 +118,17 @@ func RunREPL() {
 	}
 
 	var completer = readline.NewPrefixCompleter(
-		// ... (Keep your existing completer rules exactly as they are) ...
 		readline.PcItem("quit"),
 		readline.PcItem("exit"),
 		readline.PcItem("clear"),
 		readline.PcItem("list", readline.PcItem("projects"), readline.PcItem("models")),
-		readline.PcItem("show", readline.PcItem("global"), readline.PcItem("project"), readline.PcItem("costs"), readline.PcItem("params"), readline.PcItem("roles")),
+		readline.PcItem("show",
+			readline.PcItem("global"),
+			readline.PcItem("project"),
+			readline.PcItem("costs"),
+			readline.PcItem("params"),
+			readline.PcItem("roles"),
+		),
 		readline.PcItem("add", readline.PcItem("role")),
 		readline.PcItem("set",
 			readline.PcItem("model"),
@@ -131,14 +136,31 @@ func RunREPL() {
 			readline.PcItem("temperature"),
 			readline.PcItem("top_p"),
 			readline.PcItem("safety_level"),
+			readline.PcItem("diff_cmd"),
 			readline.PcItem("records_dir", readline.PcItemDynamic(listFiles)),
 			readline.PcItem("chunks_dir", readline.PcItemDynamic(listFiles)),
 			readline.PcItem("ingest_dir", readline.PcItemDynamic(listFiles)),
 			readline.PcItem("export_date"),
 			readline.PcItem("project_name"),
 		),
-		readline.PcItem("context-include", readline.PcItemDynamic(listFiles)),
+		readline.PcItem("context",
+			readline.PcItem("add", readline.PcItemDynamic(listFiles)),
+			readline.PcItem("list", readline.PcItem("-l")),
+			readline.PcItem("delete"),
+		),
+		readline.PcItem("file",
+			readline.PcItem("list"),
+			readline.PcItem("write"),
+			readline.PcItem("merge"),
+			readline.PcItem("clear"),
+		),
 		readline.PcItem("inc", readline.PcItemDynamic(listFiles)),
+		readline.PcItem("incl", readline.PcItem("-l")),
+		readline.PcItem("incd"),
+		readline.PcItem("ca", readline.PcItemDynamic(listFiles)),
+		readline.PcItem("cl", readline.PcItem("-l")),
+		readline.PcItem("cs", readline.PcItem("-l")),
+		readline.PcItem("cd"),
 		readline.PcItem("git-add-repo", readline.PcItemDynamic(listFiles)),
 		readline.PcItem("git-remote", readline.PcItem("push"), readline.PcItem("pull"), readline.PcItem("clone")),
 		readline.PcItem("gr",
@@ -152,10 +174,16 @@ func RunREPL() {
 		readline.PcItem("ps"),
 		readline.PcItem("cr"),
 		readline.PcItem("cw", readline.PcItemDynamic(listFiles)),
+		readline.PcItem("fl"),
+		readline.PcItem("fw"),
+		readline.PcItem("fm"),
+		readline.PcItem("fc"),
 		readline.PcItem("wf"),
 		readline.PcItem("write-files"),
 		readline.PcItem("gl"),
+		readline.PcItem("git-ledger"),
 		readline.PcItem("gd"),
+		readline.PcItem("git-diff"),
 		readline.PcItem("gs"),
 	)
 
@@ -183,10 +211,14 @@ func RunREPL() {
 		fmt.Printf("[OK]\n")
 	}
 
+	fmt.Println("Starting Web UI...")
+	webUI := NewWebServer()
+	go webUI.Start("8080")
+
 	setupPipes()
+	reviveLastResponse(core.GetActiveChat())
 
 	eventChan := make(chan InputEvent)
-	// 1. ADD THIS: Create the synchronization channel
 	termDoneChan := make(chan bool)
 
 	go listenPromptPipe(eventChan)
@@ -207,7 +239,6 @@ func RunREPL() {
 			}
 			eventChan <- InputEvent{Source: "terminal", Payload: line}
 
-			// 2. ADD THIS: Wait for the main loop to process the command before redrawing the prompt
 			<-termDoneChan
 		}
 	}()
@@ -230,8 +261,11 @@ func RunREPL() {
 			executeCommand(ctx, event.Payload, l, true)
 		} else if event.Source == "control_pipe" {
 			fmt.Fprintf(stdout, "\n\033[35m[Emacs Control]\033[0m %s\n", event.Payload)
-			if strings.ToUpper(event.Payload) == "WF" {
-				handleWF()
+
+			payloadParts := strings.Fields(event.Payload)
+			payloadCmd := strings.ToLower(payloadParts[0])
+			if payloadCmd == "wf" || payloadCmd == "fw" {
+				handleFileRouter("fw", payloadParts)
 			} else {
 				executeCommand(ctx, event.Payload, l, true)
 			}
@@ -239,7 +273,6 @@ func RunREPL() {
 			executeCommand(ctx, event.Payload, l, false)
 		}
 
-		// 3. ADD THIS: Signal the terminal goroutine that output is complete
 		if event.Source == "terminal" {
 			termDoneChan <- true
 		}
@@ -319,8 +352,8 @@ func executeCommand(ctx context.Context, line string, l *readline.Instance, from
 		}
 	case "set":
 		handleSet(parts)
-	case "context-include", "inc":
-		handleContextInclude(ctx, parts)
+	case "context", "inc", "incl", "incd", "ca", "cl", "cs", "cd":
+		handleContextRouter(ctx, cmd, parts)
 	case "git-add-repo":
 		handleGitAddRepo(parts)
 	case "gr", "git-remote":
@@ -349,25 +382,22 @@ func executeCommand(ctx context.Context, line string, l *readline.Instance, from
 		handleCR()
 	case "cw":
 		handleCW(parts)
-	case "wf", "write-files":
-		handleWF()
-	case "gl":
+	case "file", "fl", "fw", "fm", "fc", "wf", "write-files":
+		handleFileRouter(cmd, parts)
+	case "gl", "git-ledger":
 		handleGL(parts)
-	case "gd":
+	case "gd", "git-diff":
 		handleGD(parts)
 	case "gs":
 		handleGS(parts)
 	case "prompt":
-		// RULE 5: Explicit Prompt Command
 		if len(parts) < 2 {
 			fmt.Println("[Error] Usage: prompt <your question here>")
 			return false
 		}
 		sendAndRender(ctx, strings.Join(parts[1:], " "), fromPipe, stdout)
 	default:
-		// RULE 5: The Chat Barrier (No raw typos)
 		if fromPipe {
-			// Emacs naturally pipes conversational text without commands
 			sendAndRender(ctx, line, fromPipe, stdout)
 		} else {
 			fmt.Printf("\033[31m[!] Unknown command: '%s'\033[0m\n", cmd)
@@ -550,7 +580,6 @@ func handleShowCosts(parts []string) {
 		return
 	}
 
-	// Default to the 1st of the current month
 	filterDate := time.Now().UTC().Format("2006-01") + "-01T00:00:00Z"
 	title := "Costs (Since start of month)"
 
@@ -560,7 +589,7 @@ func handleShowCosts(parts []string) {
 			title = "Costs (All Time)"
 		} else {
 			filterDate = parts[2]
-			if len(filterDate) == 10 { // e.g. 2026-05-15
+			if len(filterDate) == 10 {
 				filterDate += "T00:00:00Z"
 			}
 			title = fmt.Sprintf("Costs (Since %s)", parts[2])
@@ -582,7 +611,7 @@ func handleShowCosts(parts []string) {
 		}
 
 		if filterDate != "" && cols[0] < filterDate {
-			continue // Skip records older than the filter date
+			continue
 		}
 
 		inTok, _ := strconv.Atoi(cols[2])
@@ -596,7 +625,6 @@ func handleShowCosts(parts []string) {
 		totalTokens += totTok
 		totalCost += cost
 
-		// Only print the last 5 relevant lines to keep the UI clean
 		if len(lines)-i <= 5 {
 			fmt.Printf("%-25s %-12d %-12d %-12d $%.6f\n", cols[0], inTok, outTok, totTok, cost)
 			printCount++
@@ -650,8 +678,6 @@ func handleSet(parts []string) {
 		}
 	}
 
-	// Route STATE variables strictly to core.GlobalSt
-	// Route STATE variables strictly to core.GlobalSt
 	if field == "export_date" {
 		core.GlobalSt.ExportDate = finalValue.(string)
 		core.SaveGlobalState()
@@ -670,20 +696,16 @@ func handleSet(parts []string) {
 		core.SaveGlobalState()
 
 		fmt.Printf("\033[32m[✓] Registered new workspace:\033[0m %s -> %s\n", projName, cwd)
-
-		// Pivot the active session into the new project vault
 		core.InitConfig(core.ProjectCfg.ProjectName)
 		return
 	}
 
-	// Route CONFIG variables to Viper
 	isGlobalConfig := core.GlobalViper.IsSet(field) || field == "records_dir" || field == "chunks_dir" || field == "ingest_dir" || field == "api_key_file"
 	isProject := core.ProjectViper.IsSet(field) || field == "project_name" || field == "shell_cmd" || field == "diff_cmd" || field == "model_name" || field == "temperature" || field == "top_p" || field == "safety_level" || field == "role"
 
 	core.ExecuteTransaction("set_"+field, func(anchor string, now time.Time) error {
 		if isGlobalConfig {
 			core.GlobalViper.Set(field, finalValue)
-			// Explicitly save using the correct path to prevent empty overwrites
 			core.GlobalViper.WriteConfigAs(filepath.Join(core.GetConfigDir(), "config.yaml"))
 			core.InitConfig(core.ProjectCfg.ProjectName)
 		} else if isProject {

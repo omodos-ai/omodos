@@ -84,8 +84,10 @@ func TestHermeticEmacsIPC(t *testing.T) {
 				if event.Source == "prompt_pipe" {
 					executeCommand(ctx, event.Payload, nil, true)
 				} else if event.Source == "control_pipe" {
-					if strings.ToUpper(event.Payload) == "WF" {
-						handleWF()
+					payloadParts := strings.Fields(event.Payload)
+					payloadCmd := strings.ToUpper(payloadParts[0])
+					if payloadCmd == "WF" || payloadCmd == "FW" {
+						handleFileRouter("fw", payloadParts)
 					} else {
 						executeCommand(ctx, event.Payload, nil, true)
 					}

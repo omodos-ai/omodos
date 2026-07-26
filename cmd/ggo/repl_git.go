@@ -85,8 +85,15 @@ func handleGL(parts []string) {
 		return
 	}
 	fmt.Println("\n--- Time Machine Ledger ---")
+	centralGitDir := filepath.Join(core.GetProjectVaultDir(core.ProjectCfg.ProjectName), ".git")
 	for i, t := range tags {
-		fmt.Printf("[%d] %s\n", i, t)
+		// Extract the human-readable commit message stored in the central vault
+		out, err := exec.Command("git", "--git-dir="+centralGitDir, "log", "-1", "--format=%s", t).Output()
+		msg := ""
+		if err == nil {
+			msg = strings.TrimSpace(string(out))
+		}
+		fmt.Printf("[%d] %-25s %s\n", i, t, msg)
 	}
 	fmt.Println()
 }
@@ -135,5 +142,39 @@ func handleGS(parts []string) {
 }
 
 func handleGD(parts []string) {
-	fmt.Println("-> Stub: Time Machine diff (gd) is pending UI wiring.")
+	if len(parts) == 2 {
+		// Check if the user passed a ledger index (e.g., `gd 5`)
+		if idx, err := strconv.Atoi(parts[1]); err == nil {
+			tags := getLedgerTags()
+			if idx >= 0 && idx < len(tags) {
+				tag := tags[idx]
+				fmt.Printf("\n--- Time Machine Diff for Index [%d] %s ---\n", idx, tag)
+
+				for _, dir := range core.ProjectCfg.CodeDirs {
+					absDir, _ := filepath.Abs(dir)
+					repoID := core.GetRepoID(absDir)
+					shadowDir := filepath.Join(core.GetConfigDir(), "shadow-repos", repoID)
+					refPath := "refs/ggo/txn/" + tag
+
+					// Ask the shadow repo to show the diff for this specific transaction
+					cmd := exec.Command("git", "-C", shadowDir, "show", "--stat", "-p", refPath)
+					cmd.Stdout = os.Stdout
+					cmd.Stderr = os.Stderr
+					cmd.Run()
+				}
+				return
+			}
+		}
+	}
+
+	// Fallback: If no index is provided, behave as a standard pass-through to `git diff`
+	cwd, _ := os.Getwd()
+	args := append([]string{"diff"}, parts[1:]...)
+	cmd := exec.Command("git", args...)
+	cmd.Dir = cwd
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		// Ignore exit status 1, which git natively uses to indicate diffs exist
+	}
 }

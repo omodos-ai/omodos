@@ -35,11 +35,10 @@ func ExpandTilde(path string) string {
 	return path
 }
 
-func InitConfig(overrideProject string) {
+func InitGlobalConfig() {
 	configDir := GetConfigDir()
 	os.MkdirAll(configDir, 0755)
 
-	// 1. Load Global Config
 	GlobalCfg = &pb.GlobalConfig{}
 	GlobalViper = viper.New()
 	GlobalViper.SetConfigFile(filepath.Join(configDir, "config.yaml"))
@@ -50,7 +49,6 @@ func InitConfig(overrideProject string) {
 		GlobalCfg.IngestDir = ExpandTilde(GlobalViper.GetString("ingest_dir"))
 	}
 
-	// 2. Load Global State
 	GlobalSt = &pb.GlobalState{Projects: make(map[string]string)}
 	statePath := filepath.Join(configDir, "state.json")
 	if bytes, err := os.ReadFile(statePath); err == nil {
@@ -59,15 +57,18 @@ func InitConfig(overrideProject string) {
 	if GlobalSt.Projects == nil {
 		GlobalSt.Projects = make(map[string]string)
 	}
+}
+
+func InitConfig(overrideProject string) {
+	InitGlobalConfig()
 
 	cwd, _ := os.Getwd()
 	var activeProject string
 
-	// RULE 4: Explicit Override (-p flag)
 	if overrideProject != "" {
 		if path, exists := GlobalSt.Projects[overrideProject]; exists {
 			activeProject = overrideProject
-			os.Chdir(path) // Teleport environment
+			os.Chdir(path)
 		} else {
 			fmt.Printf("[Error] Project '%s' not found in ledger. Known projects:\n", overrideProject)
 			for p := range GlobalSt.Projects {
@@ -77,24 +78,18 @@ func InitConfig(overrideProject string) {
 		}
 	}
 
-	// RULE 1: Auto-Detect by CWD
 	if activeProject == "" {
-		var longestMatch int
 		for name, path := range GlobalSt.Projects {
-			if strings.HasPrefix(cwd, path) {
-				if len(path) > longestMatch {
-					longestMatch = len(path)
-					activeProject = name
-				}
+			if cwd == path {
+				activeProject = name
+				break
 			}
 		}
 	}
 
-	// RULE 2: The "Stranger" Protocol (Unrecognized Directory)
 	if activeProject == "" {
 		stat, _ := os.Stdin.Stat()
 		if (stat.Mode() & os.ModeCharDevice) == 0 {
-			// Headless/Test Mode Fallback
 			activeProject = "global_headless"
 		} else {
 			basename := filepath.Base(cwd)
@@ -120,10 +115,15 @@ func InitConfig(overrideProject string) {
 	GlobalSt.LastProject = activeProject
 	SaveGlobalState()
 
-	// 3. Load Project Data
 	ProjectCfg = &pb.ProjectConfig{ProjectName: activeProject}
 	projVault := GetProjectVaultDir(activeProject)
 	os.MkdirAll(projVault, 0755)
+
+	ProjectSt = &pb.ProjectState{}
+	projStatePath := filepath.Join(projVault, "state.json")
+	if bytes, err := os.ReadFile(projStatePath); err == nil {
+		protojson.Unmarshal(bytes, ProjectSt)
+	}
 
 	ProjectViper = viper.New()
 	ProjectViper.SetConfigFile(filepath.Join(projVault, "project.yaml"))
@@ -132,14 +132,11 @@ func InitConfig(overrideProject string) {
 		ProjectCfg.CodeDirs = ProjectViper.GetStringSlice("code_dirs")
 		ProjectCfg.ModelName = ProjectViper.GetString("model_name")
 		ProjectCfg.Role = ProjectViper.GetString("role")
+
+		// BUG FIX: Hydrate the in-memory array from the persistent config on boot
+		ProjectSt.IncludedData = ProjectViper.GetStringSlice("included_data")
 	}
 	ProjectCfg.ProjectName = activeProject
-
-	ProjectSt = &pb.ProjectState{}
-	projStatePath := filepath.Join(projVault, "state.json")
-	if bytes, err := os.ReadFile(projStatePath); err == nil {
-		protojson.Unmarshal(bytes, ProjectSt)
-	}
 }
 
 func SaveGlobalState() {

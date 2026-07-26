@@ -20,5 +20,6 @@ build
 /.ggo/
 /pb/
 /test-data/
+/web/
 
 

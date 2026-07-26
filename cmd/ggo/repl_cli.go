@@ -33,9 +33,9 @@ func sendToPipeIfRunning(pipeName, payload string) bool {
 
 func init() {
 	replCommands := []string{
-		"list", "add", "show", "set", "context-include", "inc", "git-add-repo",
+		"list", "add", "show", "set", "context", "ca", "cl", "cs", "cd", "context-include", "inc", "incl", "incd", "git-add-repo",
 		"gr", "git-remote", "cc", "ps", "cr", "cw", "wf", "write-files",
-		"gl", "gd", "gs",
+		"file", "fl", "fw", "fm", "fc", "gl", "git-ledger", "gd", "git-diff", "gs",
 	}
 
 	for _, cmdName := range replCommands {
@@ -70,7 +70,6 @@ func init() {
 		Aliases:            []string{"ask", "q"},
 		DisableFlagParsing: true,
 		Run: func(cmd *cobra.Command, args []string) {
-			// FIX: Prepend 'prompt' to the payload so executeCommand parses it correctly
 			fullPrompt := "prompt " + strings.Join(args, " ")
 
 			if sent := sendToPipeIfRunning("prompt.pipe", fullPrompt); sent {
@@ -78,9 +77,8 @@ func init() {
 				return
 			}
 
-			// Fallback to synchronous execution
 			ctx := context.Background()
-			core.InitGemini(ctx) // Spin up the API for standalone CLI usage
+			core.InitGemini(ctx)
 			executeCommand(ctx, fullPrompt, nil, false)
 		},
 	}

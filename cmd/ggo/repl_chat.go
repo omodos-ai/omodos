@@ -16,6 +16,39 @@ import (
 	"github.com/peterjbraam/ggo/pb/v1"
 )
 
+func reviveLastResponse(chatName string) {
+	chatPath := filepath.Join(core.GetProjectVaultDir(core.ProjectCfg.ProjectName), "chats", chatName+".md")
+	contentBytes, err := os.ReadFile(chatPath)
+	if err != nil {
+		lastAPIResponse = ""
+		return
+	}
+
+	blocks := strings.Split(string(contentBytes), "## AI Interaction")
+	if len(blocks) <= 1 {
+		lastAPIResponse = ""
+		return
+	}
+
+	lastBlock := blocks[len(blocks)-1]
+	rIdx := strings.Index(lastBlock, "### Response\n")
+	if rIdx != -1 {
+		respRaw := lastBlock[rIdx+len("### Response\n"):]
+		sIdx := strings.Index(respRaw, "### State update\n")
+		if sIdx != -1 {
+			respRaw = respRaw[:sIdx]
+		} else {
+			lastDash := strings.LastIndex(respRaw, "---")
+			if lastDash != -1 {
+				respRaw = respRaw[:lastDash]
+			}
+		}
+		lastAPIResponse = strings.TrimSpace(respRaw)
+	} else {
+		lastAPIResponse = ""
+	}
+}
+
 func handleCC(parts []string) {
 	if len(parts) < 2 {
 		fmt.Println("Usage: cc <chat-name>")
@@ -35,8 +68,10 @@ func handleCC(parts []string) {
 		header := fmt.Sprintf("# 🧠 ggo Chat: %s\n*Started: %s*\n\n", core.ActiveChatName, time.Now().Format("2006-01-02 15:04:05"))
 		os.WriteFile(filePath, []byte(header), 0644)
 		fmt.Printf("[✓] Created and activated chat: %s\n", core.ActiveChatName)
+		lastAPIResponse = ""
 	} else {
 		fmt.Printf("[Info] Activated existing chat: %s\n", core.ActiveChatName)
+		reviveLastResponse(core.ActiveChatName)
 	}
 
 	core.UpdateChatModel()
@@ -144,20 +179,28 @@ func buildJITContextAndSync() string {
 }
 
 func DispatchPrompt(ctx context.Context, prompt string, source string) (string, error) {
+	fmt.Printf("[DEBUG-TRACE] [DISPATCH] Beginning DispatchPrompt for source: %s\n", source)
 	activeChat := core.GetActiveChat()
+
+	fmt.Printf("[DEBUG-TRACE] [DISPATCH] Building JIT context...\n")
 	contextStr := buildJITContextAndSync()
+	fmt.Printf("[DEBUG-TRACE] [DISPATCH] JIT context built. Length: %d\n", len(contextStr))
 
 	apiPrompt := prompt
 	if contextStr != "-" {
 		apiPrompt = contextStr + "\n\n" + prompt
 	}
 
+	fmt.Printf("[DEBUG-TRACE] [DISPATCH] Yielding to core.SendPrompt...\n")
 	response, err := core.SendPrompt(ctx, apiPrompt)
 	if err != nil {
+		fmt.Printf("[DEBUG-TRACE] [DISPATCH] core.SendPrompt failed: %v\n", err)
 		return "", err
 	}
-	lastAPIResponse = response
+	fmt.Printf("[DEBUG-TRACE] [DISPATCH] core.SendPrompt succeeded. Response length: %d\n", len(response))
 
+	lastAPIResponse = response
+	fmt.Printf("[DEBUG-TRACE] [DISPATCH] Auto-copying to clipboard...\n")
 	autoCopyToClipboard(response)
 
 	now := time.Now().UTC()
@@ -184,7 +227,6 @@ func DispatchPrompt(ctx context.Context, prompt string, source string) (string, 
 	includesStr := strings.TrimSpace(includesBuilder.String())
 	slug := core.MakeSafeSlug(prompt)
 
-	// 1. Maintain local human-readable project chat log
 	recordMarkdown := fmt.Sprintf(`## AI Interaction
 ### Date
 %s
@@ -212,6 +254,7 @@ func DispatchPrompt(ctx context.Context, prompt string, source string) (string, 
 ---
 `, dateISO, activeChat, source, modelName, includesStr, cwd, slug, contextStr, prompt, response, anchor)
 
+	fmt.Printf("[DEBUG-TRACE] [DISPATCH] Writing to Chat Markdown Ledger...\n")
 	chatPath := filepath.Join(core.GetProjectVaultDir(core.ProjectCfg.ProjectName), "chats", activeChat+".md")
 	f, err := os.OpenFile(chatPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err == nil {
@@ -219,8 +262,8 @@ func DispatchPrompt(ctx context.Context, prompt string, source string) (string, 
 		f.Close()
 	}
 
-	// 2. Write strict JSON schema to the global AI Records Database
 	if core.GlobalCfg.RecordsDir != "" {
+		fmt.Printf("[DEBUG-TRACE] [DISPATCH] Writing to JSON records dir...\n")
 		recordsDir := filepath.Join(core.GlobalCfg.RecordsDir, year, month)
 		jsonFilename := fmt.Sprintf("%s-%s.json", filenameTime, slug)
 
@@ -237,13 +280,13 @@ func DispatchPrompt(ctx context.Context, prompt string, source string) (string, 
 				Narrative: response,
 			},
 		}
-
 		core.WriteRecord(recordsDir, jsonFilename, record)
 	}
 
 	cleanResp := strings.ReplaceAll(response, "\x00", "")
 	cleanResp = strings.ReplaceAll(cleanResp, "\x1b", "")
 
+	fmt.Printf("[DEBUG-TRACE] [DISPATCH] Returning to caller.\n")
 	return cleanResp, nil
 }
 
