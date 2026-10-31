@@ -55,7 +55,7 @@ func TestDispatchPromptInterrupt(t *testing.T) {
 	// 2. Create a dummy file and enroll it in the context baseline
 	testFile := filepath.Join(tempDir, "interrupt_target.txt")
 	os.WriteFile(testFile, []byte("INITIAL STATE"), 0644)
-	
+
 	core.ProjectSt.IncludedData = []string{testFile}
 	core.ActiveChatName = "interrupt_chat"
 
@@ -65,7 +65,7 @@ func TestDispatchPromptInterrupt(t *testing.T) {
 	// 4. Mock the API to simulate a network failure or Ctrl-C interrupt
 	origSendPrompt := core.SendPrompt
 	defer func() { core.SendPrompt = origSendPrompt }()
-	
+
 	core.SendPrompt = func(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("simulated network interrupt")
 	}
@@ -73,7 +73,7 @@ func TestDispatchPromptInterrupt(t *testing.T) {
 	// 5. Action: Dispatch the prompt
 	promptText := "This is a test prompt that should be saved despite the error."
 	_, err := DispatchPrompt(context.Background(), promptText, "test-suite")
-	
+
 	if err == nil || !strings.Contains(err.Error(), "simulated network interrupt") {
 		t.Fatalf("Expected simulated interrupt error, got: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestDispatchPromptInterrupt(t *testing.T) {
 	if !strings.Contains(record.Input.Narrative, promptText) {
 		t.Errorf("Saved record missing the user prompt.")
 	}
-	
+
 	// Ensure the JIT context snapshot was captured at the exact moment of interruption
 	if !strings.Contains(record.Input.Narrative, "MODIFIED STATE") {
 		t.Errorf("Saved record missing the JIT context injection.")

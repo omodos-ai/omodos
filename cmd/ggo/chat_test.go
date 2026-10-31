@@ -83,7 +83,7 @@ func TestLiveEndToEndChatAndContext(t *testing.T) {
 		}
 	}
 	sort.Strings(jsonFiles)
-	
+
 	record1, _ := core.ReadRecord(filepath.Join(chatDir, jsonFiles[0]))
 
 	if !strings.Contains(strings.ToUpper(record1.Output.Narrative), "OFFLINE") {

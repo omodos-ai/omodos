@@ -338,4 +338,3 @@ func sanitizeSnippet(text string) string {
 	text = strings.ReplaceAll(text, "\x1b", "")
 	return strings.TrimSpace(text)
 }
-
